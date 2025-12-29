@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+{% include "_report_styles.html" %}
+</head>
+<body>
+  <div class="header">
+    <div class="logos">
+      {% if logo_path %}<img src="{{ logo_path }}" alt="logo">{% endif %}
+    </div>
+    <div class="title">
+      <h1 class="report-title">تقرير يتيم</h1>
+      <div class="meta">{{ organization }} — {{ generated_at }}</div>
+    </div>
+    <div class="logos">
+      {% if ps_logo_path %}<img src="{{ ps_logo_path }}" alt="ps">{% endif %}
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>بيانات اليتيم</h3>
+    <p><strong>الاسم:</strong> {{ orphan.name }}</p>
+    <p><strong>تاريخ الميلاد:</strong> {{ orphan.birth_date }}</p>
+    <p><strong>رقم الهوية:</strong> {{ orphan.national_id }}</p>
+  </div>
+
+  <div class="section">
+    <h3>الأرصدة</h3>
+    {% if balances_total and balances_total|length > 0 %}
+      <div class="balances-list">
+        {% for b in balances_total %}
+          <div class="balance-pill">{{ b.currency }}: {{ b.amount }}</div>
+        {% endfor %}
+      </div>
+    {% elif balances and balances|length > 0 %}
+      <table>
+        <thead>
+          <tr><th>العملة</th><th>المبلغ</th></tr>
+        </thead>
+        <tbody>
+          {% for b in balances %}
+            <tr><td>{{ b.currency }}</td><td>{{ b.amount }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="no-data">لا توجد أرصدة</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h3>العمليات الأخيرة</h3>
+    {% if transactions and transactions|length > 0 %}
+      <table>
+        <thead>
+          <tr><th>التاريخ</th><th>النوع</th><th>المبلغ</th><th>العملة</th><th>ملاحظة</th></tr>
+        </thead>
+        <tbody>
+          {% for t in transactions %}
+            <tr>
+              <td>{{ t.date }}</td>
+              <td>{{ t.type }}</td>
+              <td>{{ t.amount }}</td>
+              <td>{{ t.currency }}</td>
+              <td>{{ t.note }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="no-data">لا توجد عمليات</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h3>بيانات المتوفى</h3>
+    {% if deceased %}
+      <p><strong>الاسم:</strong> {{ deceased.name }}</p>
+      <p><strong>رقم الهوية:</strong> {{ deceased.national_id }}</p>
+      <p><strong>تاريخ الوفاة:</strong> {{ deceased.death_date }}</p>
+    {% else %}
+      <p class="no-data">لا توجد بيانات متوفى</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h3>بيانات الوصي الشرعي</h3>
+    {% if guardian %}
+      <p><strong>الاسم:</strong> {{ guardian.name }}</p>
+      <p><strong>رقم الهوية:</strong> {{ guardian.national_id }}</p>
+      <p><strong>هاتف:</strong> {{ guardian.phone }}</p>
+    {% else %}
+      <p class="no-data">لا يوجد وصي مسجل</p>
+    {% endif %}
+  </div>
+
+  <div class="footer-note">تم إصدار هذا التقرير بواسطة {{ organization }} — {{ generated_at }}</div>
+</body>
+</html>

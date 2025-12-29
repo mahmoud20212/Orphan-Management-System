@@ -1,0 +1,38 @@
+{% include '_report_styles.html' %}
+<!doctype html>
+<html lang="ar">
+<head>
+  <meta charset="utf-8" />
+  <title>تقرير شهري - الأيتام القاصرين</title>
+</head>
+<body>
+  <header>
+    <h1>تقرير عدد الأيتام القاصرين</h1>
+    <p>عدد الأشهر: {{ months }}</p>
+    <p>تاريخ التوليد: {{ generated_at }}</p>
+    <hr/>
+  </header>
+  <main>
+    <table class="report-table" width="100%">
+      <thead>
+        <tr>
+          <th>الشهر</th>
+          <th>عدد الأيتام القاصرين</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in data %}
+        <tr>
+          <td>{{ row.month }}</td>
+          <td style="text-align:right">{{ row.count }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+  <footer>
+    <hr/>
+    <small>{{ organization }}</small>
+  </footer>
+</body>
+</html>
