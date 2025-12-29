@@ -2,7 +2,7 @@ import os
 import sys
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
-from models import Currency
+from database.models import Currency
 
 # Add current path to sys.path to ensure local modules are imported
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -21,16 +21,15 @@ def add_default_currencies(session: Session):
     session.commit()
 
 try:
-    # database/connection.py must contain the definition of engine and Base
-    from database import Base
-    from database.connection import engine
+    # database/db.py must contain the definition of engine and Base
+    from database.db import engine, Base
     # All models must be imported to ensure Base.metadata knows about them
     # We assume models.py contains all table definitions
-    import models 
+    import database.models 
 except ImportError as e:
     print("-------------------------------------------------------------------")
     print("Import Error:")
-    print("Please ensure 'database/connection.py' and 'models.py' are in the correct path.")
+    print("Please ensure 'database/db.py' and 'models.py' are in the correct path.")
     print(f"Error: {e}")
     print("-------------------------------------------------------------------")
     sys.exit(1)
@@ -67,7 +66,7 @@ def reset_database():
     except OperationalError as e:
         print("-------------------------------------------------------------------")
         print("Connection or Operational Error:")
-        print("Please ensure the database is running and connection details in database/connection.py are correct.")
+        print("Please ensure the database is running and connection details in database/db.py are correct.")
         print(f"Error: {e}")
         print("-------------------------------------------------------------------")
     except Exception as e:

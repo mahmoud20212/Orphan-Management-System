@@ -1,8 +1,3 @@
-"""
-Report generation service module.
-This module contains the richer, well-organized report generation logic.
-This module replaces the previous `report_service.py` implementation.
-"""
 from jinja2 import Environment, FileSystemLoader
 import os
 from datetime import date, datetime
@@ -19,7 +14,7 @@ except Exception:
     except Exception:
         RENDERER = None
 
-from repositories.db_repository import DBService
+from .db_services import DBService
 
 # Initialize Jinja environment pointing to project templates folder
 try:
@@ -322,52 +317,52 @@ def generate_report(entity_type: str, entity_id: int, output_path: str = None, a
             raise
         except Exception as e2:
             raise ReportError(f"فشل إنشاء PDF ({e}) ولم أتمكن من حفظ ملف HTML للتدقيق ({e2})") from e
-    """Generate PDF report and write to output_path or return bytes if as_bytes=True.
+    # """Generate PDF report and write to output_path or return bytes if as_bytes=True.
 
-    Args:
-        entity_type: 'orphan'|'deceased'|'guardian'
-        entity_id: integer id
-        output_path: path to save PDF. If None and as_bytes True, returns bytes.
-        as_bytes: if True and output_path is None, returns PDF bytes.
-    """
-    db = DBService()
-    ctx = fetch_entity_data(entity_type, entity_id, db)
-    html = _render_html(entity_type, ctx)
+    # Args:
+    #     entity_type: 'orphan'|'deceased'|'guardian'
+    #     entity_id: integer id
+    #     output_path: path to save PDF. If None and as_bytes True, returns bytes.
+    #     as_bytes: if True and output_path is None, returns PDF bytes.
+    # """
+    # db = DBService()
+    # ctx = fetch_entity_data(entity_type, entity_id, db)
+    # html = _render_html(entity_type, ctx)
 
-    # Attempt to render PDF with available backend. If rendering fails, write the HTML to a temp file
-    # so the user can inspect layout and CSS in a browser.
-    import tempfile
-    try:
-        if RENDERER == "weasy":
-            html_obj = HTML(string=html)
-            if output_path:
-                html_obj.write_pdf(output_path)
-                return output_path
-            else:
-                return html_obj.write_pdf()
-        elif RENDERER == "pdfkit":
-            config = None
-            try:
-                config = pdfkit.configuration()
-            except Exception:
-                pass
-            if output_path:
-                pdfkit.from_string(html, output_path, configuration=config)
-                return output_path
-            else:
-                return pdfkit.from_string(html, False, configuration=config)
-        else:
-            raise ReportError("No PDF rendering backend available. Install weasyprint or wkhtmltopdf/pdfkit.")
-    except Exception as e:
-        # Save rendered HTML for debugging
-        try:
-            tmp_dir = tempfile.gettempdir()
-            fname = f"report_debug_{entity_type}_{entity_id}.html"
-            tmp_path = os.path.join(tmp_dir, fname)
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                fh.write(html)
-            raise ReportError(f"فشل إنشاء PDF: {e}. تم حفظ نسخة HTML للتدقيق في: {tmp_path}")
-        except ReportError:
-            raise
-        except Exception as e2:
-            raise ReportError(f"فشل إنشاء PDF ({e}) ولم أتمكن من حفظ ملف HTML للتدقيق ({e2})") from e
+    # # Attempt to render PDF with available backend. If rendering fails, write the HTML to a temp file
+    # # so the user can inspect layout and CSS in a browser.
+    # import tempfile
+    # try:
+    #     if RENDERER == "weasy":
+    #         html_obj = HTML(string=html)
+    #         if output_path:
+    #             html_obj.write_pdf(output_path)
+    #             return output_path
+    #         else:
+    #             return html_obj.write_pdf()
+    #     elif RENDERER == "pdfkit":
+    #         config = None
+    #         try:
+    #             config = pdfkit.configuration()
+    #         except Exception:
+    #             pass
+    #         if output_path:
+    #             pdfkit.from_string(html, output_path, configuration=config)
+    #             return output_path
+    #         else:
+    #             return pdfkit.from_string(html, False, configuration=config)
+    #     else:
+    #         raise ReportError("No PDF rendering backend available. Install weasyprint or wkhtmltopdf/pdfkit.")
+    # except Exception as e:
+    #     # Save rendered HTML for debugging
+    #     try:
+    #         tmp_dir = tempfile.gettempdir()
+    #         fname = f"report_debug_{entity_type}_{entity_id}.html"
+    #         tmp_path = os.path.join(tmp_dir, fname)
+    #         with open(tmp_path, "w", encoding="utf-8") as fh:
+    #             fh.write(html)
+    #         raise ReportError(f"فشل إنشاء PDF: {e}. تم حفظ نسخة HTML للتدقيق في: {tmp_path}")
+    #     except ReportError:
+    #         raise
+    #     except Exception as e2:
+    #         raise ReportError(f"فشل إنشاء PDF ({e}) ولم أتمكن من حفظ ملف HTML للتدقيق ({e2})") from e

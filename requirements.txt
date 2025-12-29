@@ -1,7 +1,0 @@
-jinja2
-# Recommended: WeasyPrint (preferred)
-weasyprint
-# Optional fallback: pdf generation via wkhtmltopdf + pdfkit
-pdfkit
-# Testing
-pytest

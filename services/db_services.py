@@ -1,19 +1,12 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func
-from database.connection import SessionLocal
-from models import Deceased, Orphan, OrphanGuardian, Guardian
+from database.db import SessionLocal
+from database.models import Deceased, Orphan, OrphanGuardian, Guardian
 from datetime import date
 
-from models.currency import Currency
-from models.orphan_balance import OrphanBalance
-from models.transaction import Transaction
+from database.models import Currency, OrphanBalance, Transaction
 
 class DBService:
-    """
-    Database Service / Repository
-    This class contains all DB access logic. It is intended to be imported from
-    application modules as `from repositories.db_repository import DBService`.
-    """
     def __init__(self):
         pass
 
