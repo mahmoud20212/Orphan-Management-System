@@ -1,0 +1,16 @@
+- home page
+- person detail page
+    - edit, delete, view
+- new person page
+    - create
+- deceased pepole list page
+- guardians list page
+- orphans list page
+- orphans over 18 page
+- users page
+- roles page
+- perm page
+- settings page
+- reports
+- transactions
+- balances

@@ -1,11 +1,13 @@
+"""سكربت إعادة تعيين قاعدة البيانات."""
 import os
 import sys
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 from database.models import Currency
 
-# Add current path to sys.path to ensure local modules are imported
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# إضافة جذر المشروع إلى المسار
+# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 def add_default_currencies(session: Session):
     default_list = [
@@ -20,12 +22,12 @@ def add_default_currencies(session: Session):
             session.add(Currency(code=cur["code"], name=cur["name"]))
     session.commit()
 
+
 try:
-    # database/db.py must contain the definition of engine and Base
-    from database.db import engine, Base
-    # All models must be imported to ensure Base.metadata knows about them
-    # We assume models.py contains all table definitions
-    import database.models 
+    # تأكد من استيراد النماذج أولاً لتسجيلها لدى Base
+    import database.models  # registers models with Base
+    from database.db import initialize_database, Base
+    engine, db_type = initialize_database()
 except ImportError as e:
     print("-------------------------------------------------------------------")
     print("Import Error:")
@@ -34,25 +36,20 @@ except ImportError as e:
     print("-------------------------------------------------------------------")
     sys.exit(1)
 
+
 def reset_database():
-    """
-    Drops all tables, recreates them, and adds default currencies.
-    """
     print("-------------------------------------------------------------------")
     print("Starting database reset process...")
 
     try:
-        # 1. Drop all tables
         print("1. Dropping all tables...")
         Base.metadata.drop_all(engine)
         print("All tables dropped successfully.")
 
-        # 2. Create all tables
         print("2. Creating all tables...")
         Base.metadata.create_all(engine)
         print("All tables created successfully.")
 
-        # 3. Add default currencies
         print("3. Adding default currencies...")
         session = Session(bind=engine)
         add_default_currencies(session)

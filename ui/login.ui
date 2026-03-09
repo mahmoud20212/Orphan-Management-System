@@ -1,0 +1,925 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">* {
+	font-family: &quot;Cairo&quot;;
+}
+
+QMainWindow {
+    background-color: #f4f6f9;
+}
+
+/* =======================
+   Header (الجزء العلوي)
+======================= */
+#HeaderWidget {
+    background-color: #ffffff;
+    border-bottom: 1px solid #e1e4e8;
+}
+
+#HeaderTitle {
+    font-size: 18px;
+    font-weight: bold;
+    color: #1f2937;
+}
+
+#HeaderSubTitle {
+    color: #6b7280;
+    font-size: 13px;
+}
+
+/* =======================
+   أزرار عامة
+======================= */
+QPushButton {
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    background-color: #2d6cdf;
+    color: white;
+}
+
+QPushButton:hover {
+    background-color: #1f5bd6;
+}
+
+QPushButton:pressed {
+    background-color: #194bb5;
+}
+
+QPushButton#Secondary {
+    background-color: #e5e7eb;
+    color: #111827;
+}
+
+QPushButton#Secondary:hover {
+    background-color: #d1d5db;
+}
+
+/* =======================
+   QListWidget (القائمة الجانبية)
+======================= */
+QListWidget {
+    background-color: #ffffff;
+    border: none;
+    outline: 0;
+    padding: 6px;
+    color: #1f2937;
+}
+
+QListWidget::item {
+    padding: 10px 12px;
+    margin: 4px;
+    border-radius: 8px;
+}
+
+QListWidget::item:hover {
+    background-color: #eef2ff;
+}
+
+QListWidget::item:selected {
+    background-color: #2d6cdf;
+    color: white;
+	font-weight: bold;
+}
+
+QListWidget::item:selected:!active {
+    background-color: #9bb6f0;
+    color: white;
+}
+
+/* =======================
+   QTabWidget
+======================= */
+QTabWidget::pane {
+    border: none;
+    background-color: transparent;
+}
+
+QTabBar::tab {
+    background: #f0f0f0;
+    padding: 10px 20px;
+    border: none;
+    color: #555;
+}
+
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #cda434;
+    font-weight: bold;
+	border-bottom: 2px solid #cda434;
+}
+
+QTabBar::tab:hover {
+    background: #e0e0e0;
+}
+
+
+QTabBar::tab:first {
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
+QTabBar::tab:last {
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+}
+
+/* =======================
+   Cards (بطاقات البيانات)
+======================= */
+QWidget[class~=&quot;Card&quot;],
+#widget_12,
+#widget_3,
+#widget_5,
+#widget_24,
+#widget_26,
+#widget_28 {
+    background-color: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+}
+
+QLabel[class~=&quot;CardTitle&quot;] {
+    font-weight: bold;
+    font-size: 15px;
+    color: #111827;
+}
+
+QLabel[class~=&quot;CardValue&quot;] {
+    color: #1f2937;
+}
+
+
+/* =======================
+   GroupBox (بديل للكارد)
+======================= */
+QGroupBox {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    margin-top: 10px;
+    background-color: #ffffff;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top right;
+    padding: 0 8px;
+    font-weight: bold;
+    color: #1f2937;
+}
+
+/* =======================
+   حقول الإدخال (Edit Mode)
+======================= */
+QLineEdit, QComboBox, QDateEdit {
+    padding: 6px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background-color: #ffffff;
+}
+
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus {
+    border: 1px solid #2d6cdf;
+}
+
+/* =======================
+   Tables
+======================= */
+QTableWidget {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    gridline-color: #e5e7eb;
+}
+
+QHeaderView::section {
+    background-color:  #f3f4f6;
+    padding: 8px;
+    border: none;
+    font-weight: bold;
+    color: #374151;
+}
+
+QTableWidget::item:selected {
+    background-color: #e0ecff;
+    color: #111827;
+}
+
+/* =======================
+   ScrollBar
+======================= */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: #c7d2fe;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #a5b4fc;
+}
+
+QListWidget::item:selected QIcon {
+    color: #fff;
+}
+
+/* الشكل العام */
+QLabel.badge {
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-weight: 600;
+    color: #fff;
+}
+
+/* حالات مختلفة */
+QLabel.badge-success {
+    background-color: #16a34a;   /* أخضر */
+}
+
+QLabel.badge-danger {
+    background-color: #dc2626;   /* أحمر */
+}
+
+QLabel.badge-warning {
+    background-color: #f59e0b;   /* برتقالي */
+}
+
+QLabel.badge-info {
+    background-color: #2563eb;   /* أزرق */
+}
+
+QLabel.badge-gray {
+    background-color: #6b7280;   /* رمادي */
+}
+
+/* ذهبي رسمي */
+QLabel.badge-gold {
+    background-color: #c9a227;   /* Gold */            /* نص داكن */
+}
+
+QLabel.badge-gold-light {
+    background-color: #facc15;
+}
+
+QWidget[class~=&quot;bg-pink-gold&quot;],
+#widget_13,
+#widget_4,
+#widget_6,
+#widget_25,
+#widget_27,
+#widget_29 {
+	background-color: #f7f1df;
+}
+
+QWidget[class~=&quot;box-left-radius&quot;] {
+	border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+	border: 1px solid #e5e7eb;
+	border-right: 0;
+}
+
+QWidget[class~=&quot;box-top-radius&quot;],
+#widget_13,
+#widget_4,
+#widget_6,
+#widget_25,
+#widget_27,
+#widget_29 {
+	border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+	border: 1px solid #e5e7eb;
+	border-bottom: 0;
+}
+
+QPushButton[class~=&quot;btn&quot;] {
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton[class~=&quot;btn-card&quot;],
+#detail_deceased_clear_btn,
+#detail_guardian_clear_btn,
+#detail_guardian_clear_import,
+#add_deceased_orphans_table_btn,
+#remove_deceased_orphans_table_btn,
+#pushButton_21,
+#pushButton_15,
+#detail_deceased_import_btn {
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    background-color: #c9a227;
+    color: #fff;
+    border: 1px solid #c9a227;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]{
+    background-color: #c9a227;
+    color: #fff;
+    border: 1px solid #c9a227;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:hover {
+    background-color: #b8941f;
+    border-color: #b8941f;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:pressed {
+    background-color: #a8831c;
+    border-color: #a8831c;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:disabled {
+    background-color: #e1d7a3;
+    color: #6c6c6c;
+    border-color: #e1d7a3;
+}
+
+#add_deceased_orphans_table_btn,
+#remove_deceased_orphans_table_btn {
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    background-color: #c9a227;
+    color: #fff;
+    border: 1px solid #c9a227;
+}
+
+QPushButton[class~=&quot;btn-card&quot;]:hover,
+#detail_deceased_clear_btn:hover,
+#detail_guardian_clear_btn:hover,
+#detail_guardian_clear_import:hover,
+#add_deceased_orphans_table_btn:hover,
+#remove_deceased_orphans_table_btn:hover,
+#pushButton_21:hover,
+#pushButton_15:hover,
+#detail_deceased_import_btn:hover {
+    background-color: #b8941f;
+    border-color: #b8941f;
+}
+
+QPushButton[class~=&quot;btn-card&quot;]:pressed,
+#detail_deceased_import_btn:pressed,
+#detail_guardian_clear_btn:pressed,
+#detail_guardian_clear_import:pressed,
+#add_deceased_orphans_table_btn:pressed,
+#remove_deceased_orphans_table_btn:pressed,
+#pushButton_21:pressed,
+#pushButton_15:pressed,
+#detail_deceased_clear_btn:pressed {
+    background-color: #a8831c;
+    border-color: #a8831c;
+}
+
+QPushButton[class~=&quot;btn-card&quot;]:disabled,
+#detail_deceased_import_btn:disabled,
+#detail_guardian_clear_btn:disabled,
+#detail_guardian_clear_import:disabled,
+#add_deceased_orphans_table_btn:disabled,
+#remove_deceased_orphans_table_btn:disabled,
+#pushButton_21:disabled,
+#pushButton_15:disabled,
+#detail_deceased_clear_btn:disabled {
+    background-color: #e1d7a3;
+    color: #6c6c6c;
+    border-color: #e1d7a3;
+}
+
+#search_btn {
+    padding: 10px 18px;
+    font-size: 15px;
+    background-color: #0d6efd;
+    color: white;
+    border: 1px solid #0d6efd;
+}
+#search_btn:hover { background:#0b5ed7; }
+#search_btn:pressed { background:#0a58ca; }
+
+/* =======================
+   Primary
+======================= */
+QPushButton[class~=&quot;btn-primary&quot;] {
+    background-color: #0d6efd;
+    color: white;
+    border: 1px solid #0d6efd;
+}
+QPushButton[class~=&quot;btn-primary&quot;]:hover { background:#0b5ed7; }
+QPushButton[class~=&quot;btn-primary&quot;]:pressed { background:#0a58ca; }
+
+/* =======================
+   Secondary
+======================= */
+QPushButton[class~=&quot;btn-secondary&quot;] {
+    background-color: #6c757d;
+    color: white;
+    border: 1px solid #6c757d;
+}
+QPushButton[class~=&quot;btn-secondary&quot;]:hover { background:#5c636a; }
+
+/* =======================
+   Success
+======================= */
+QPushButton[class~=&quot;btn-success&quot;] {
+    background-color: #198754;
+    color: white;
+    border: 1px solid #198754;
+}
+QPushButton[class~=&quot;btn-success&quot;]:hover { background:#157347; }
+
+/* =======================
+   Danger
+======================= */
+QPushButton[class~=&quot;btn-danger&quot;] {
+    background-color: #dc3545;
+    color: white;
+    border: 1px solid #dc3545;
+}
+QPushButton[class~=&quot;btn-danger&quot;]:hover { background:#bb2d3b; }
+
+/* =======================
+   Warning
+======================= */
+QPushButton[class~=&quot;btn-warning&quot;] {
+    background-color: #ffc107;
+    color: #212529;
+    border: 1px solid #ffc107;
+}
+QPushButton[class~=&quot;btn-warning&quot;]:hover { background:#ffca2c; }
+
+/* =======================
+   Info
+======================= */
+QPushButton[class~=&quot;btn-info&quot;] {
+    background-color: #0dcaf0;
+    color: #212529;
+    border: 1px solid #0dcaf0;
+}
+QPushButton[class~=&quot;btn-info&quot;]:hover { background:#31d2f2; }
+
+/* =======================
+   Light
+======================= */
+QPushButton[class~=&quot;btn-light&quot;] {
+    background-color: #f8f9fa;
+    color: #212529;
+    border: 1px solid #ced4da;
+}
+QPushButton[class~=&quot;btn-light&quot;]:hover { background:#e9ecef; }
+
+/* =======================
+   Dark
+======================= */
+QPushButton[class~=&quot;btn-dark&quot;] {
+    background-color: #212529;
+    color: white;
+    border: 1px solid #212529;
+}
+QPushButton[class~=&quot;btn-dark&quot;]:hover { background:#1c1f23; }
+
+/* =======================
+   Outline Buttons
+======================= */
+QPushButton[class~=&quot;btn-outline-primary&quot;] {
+    background: transparent;
+    color: #0d6efd;
+    border: 1px solid #0d6efd;
+}
+QPushButton[class~=&quot;btn-outline-primary&quot;]:hover {
+    background:#0d6efd;
+    color:white;
+}
+
+QPushButton[class~=&quot;btn-outline-success&quot;] {
+    background: transparent;
+    color: #198754;
+    border: 1px solid #198754;
+}
+QPushButton[class~=&quot;btn-outline-success&quot;]:hover {
+    background:#198754;
+    color:white;
+}
+
+QPushButton[class~=&quot;btn-outline-danger&quot;] {
+    background: transparent;
+    color: #dc3545;
+    border: 1px solid #dc3545;
+}
+QPushButton[class~=&quot;btn-outline-danger&quot;]:hover {
+    background:#dc3545;
+    color:white;
+}
+
+/* =======================
+   Sizes
+======================= */
+QPushButton[class~=&quot;btn-sm&quot;] {
+    padding: 3px 10px;
+    font-size: 11px;
+}
+
+QPushButton[class~=&quot;btn-lg&quot;] {
+    padding: 10px 18px;
+    font-size: 15px;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;] {
+    background-color: #c9a227;
+    color: #fff;
+    border: 1px solid #c9a227;
+    font-weight: 600;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:hover {
+    background-color: #b8941f;
+    border-color: #b8941f;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:pressed {
+    background-color: #a8831c;
+    border-color: #a8831c;
+}
+
+QPushButton[class~=&quot;btn-gold&quot;]:disabled {
+    background-color: #e1d7a3;
+    color: #6c6c6c;
+    border-color: #e1d7a3;
+}
+
+/* =======================
+   Disabled
+======================= */
+QPushButton:disabled {
+    background-color: #adb5bd;
+    color: #f8f9fa;
+    border: 1px solid #adb5bd;
+}
+
+/* =======================
+   Rounded / Pill
+======================= */
+QPushButton[class~=&quot;btn-pill&quot;] {
+    border-radius: 20px;
+}
+
+/* =======================
+   Icon Button
+======================= */
+QPushButton[class~=&quot;btn-icon&quot;] {
+    padding: 6px;
+    min-width: 32px;
+    min-height: 32px;
+}
+
+QPushButton[class~=&quot;border-b-r-0&quot;] {
+	border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+}
+
+/* === Bootstrap Text Classes for PyQt === */
+
+QLabel[class=&quot;text-primary&quot;] {
+    color: #0d6efd;
+}
+
+QLabel[class=&quot;text-secondary&quot;] {
+    color: #6c757d;
+}
+
+QLabel[class=&quot;text-success&quot;] {
+    color: #198754;
+}
+
+QLabel[class=&quot;text-danger&quot;] {
+    color: #dc3545;
+}
+
+QLabel[class=&quot;text-warning&quot;] {
+    color: #ffc107;
+}
+
+QLabel[class=&quot;text-info&quot;] {
+    color: #0dcaf0;
+}
+
+QLabel[class=&quot;text-light&quot;] {
+    color: #f8f9fa;
+}
+
+QLabel[class=&quot;text-dark&quot;] {
+    color: #212529;
+}
+
+QLabel[class=&quot;text-muted&quot;] {
+    color: #6c757d;
+}
+
+QWidget[class~=&quot;bg-primary&quot;] {
+    background-color: #0d6efd;
+    color: white;
+}
+QWidget[class~=&quot;bg-secondary&quot;] {
+    background-color: #6c757d;
+    color: white;
+}
+QWidget[class~=&quot;bg-success&quot;] {
+    background-color: #198754;
+    color: white;
+}
+QWidget[class~=&quot;bg-danger&quot;] {
+    background-color: #dc3545;
+    color: white;
+}
+QWidget[class~=&quot;bg-warning&quot;] {
+    background-color: #ffc107;
+    color: black;
+}
+QWidget[class~=&quot;bg-info&quot;] {
+    background-color: #0dcaf0;
+    color: black;
+}
+QWidget[class~=&quot;bg-light&quot;] {
+    background-color: #f8f9fa;
+    color: black;
+}
+QWidget[class~=&quot;bg-dark&quot;] {
+    background-color: #212529;
+    color: white;
+}
+QWidget[class~=&quot;bg-white&quot;] {
+    background-color: #ffffff;
+    color: black;
+}
+
+QWidget[class~=&quot;bg-gold&quot;] {
+    background-color: #c9a227;
+    color: #ffffff;
+}</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QWidget" name="widget_52" native="true">
+    <property name="geometry">
+     <rect>
+      <x>220</x>
+      <y>210</y>
+      <width>381</width>
+      <height>311</height>
+     </rect>
+    </property>
+    <property name="class" stdset="0">
+     <string>Card</string>
+    </property>
+    <widget class="QWidget" name="widget_53" native="true">
+     <property name="geometry">
+      <rect>
+       <x>0</x>
+       <y>0</y>
+       <width>381</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="class" stdset="0">
+      <string>bg-pink-gold box-top-radius</string>
+     </property>
+     <widget class="QLabel" name="label_121">
+      <property name="geometry">
+       <rect>
+        <x>250</x>
+        <y>0</y>
+        <width>111</width>
+        <height>41</height>
+       </rect>
+      </property>
+      <property name="font">
+       <font>
+        <family>Cairo</family>
+        <pointsize>11</pointsize>
+        <bold>true</bold>
+       </font>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">color: #9c731d;</string>
+      </property>
+      <property name="text">
+       <string>تسجيل الدخول</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QLabel" name="label_126">
+     <property name="geometry">
+      <rect>
+       <x>270</x>
+       <y>50</y>
+       <width>91</width>
+       <height>31</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <family>Cairo</family>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>إسم المستخدم</string>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="username">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>80</y>
+       <width>341</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <family>Cairo</family>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+    </widget>
+    <widget class="QLabel" name="label_127">
+     <property name="geometry">
+      <rect>
+       <x>290</x>
+       <y>130</y>
+       <width>71</width>
+       <height>31</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <family>Cairo</family>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string>كلمة المرور</string>
+     </property>
+    </widget>
+    <widget class="QLineEdit" name="password">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>160</y>
+       <width>341</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <family>Cairo</family>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="echoMode">
+      <enum>QLineEdit::Password</enum>
+     </property>
+    </widget>
+    <widget class="QPushButton" name="login_btn">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>250</y>
+       <width>341</width>
+       <height>41</height>
+      </rect>
+     </property>
+     <property name="text">
+      <string>تسجيل الدخول</string>
+     </property>
+     <property name="autoDefault">
+      <bool>true</bool>
+     </property>
+     <property name="default">
+      <bool>true</bool>
+     </property>
+     <property name="class" stdset="0">
+      <string>btn btn-lg btn-gold</string>
+     </property>
+    </widget>
+    <widget class="QLabel" name="msg">
+     <property name="geometry">
+      <rect>
+       <x>20</x>
+       <y>210</y>
+       <width>341</width>
+       <height>21</height>
+      </rect>
+     </property>
+     <property name="font">
+      <font>
+       <family>Cairo</family>
+       <pointsize>10</pointsize>
+      </font>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="class" stdset="0">
+      <string/>
+     </property>
+    </widget>
+   </widget>
+   <widget class="QLabel" name="label_2">
+    <property name="geometry">
+     <rect>
+      <x>290</x>
+      <y>20</y>
+      <width>121</width>
+      <height>111</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string/>
+    </property>
+    <property name="pixmap">
+     <pixmap>../assets/images/ps_logo.png</pixmap>
+    </property>
+    <property name="scaledContents">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label">
+    <property name="geometry">
+     <rect>
+      <x>410</x>
+      <y>20</y>
+      <width>121</width>
+      <height>111</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string/>
+    </property>
+    <property name="pixmap">
+     <pixmap>../assets/images/logo.png</pixmap>
+    </property>
+    <property name="scaledContents">
+     <bool>true</bool>
+    </property>
+   </widget>
+   <widget class="QLabel" name="label_3">
+    <property name="geometry">
+     <rect>
+      <x>220</x>
+      <y>130</y>
+      <width>381</width>
+      <height>71</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Cairo</family>
+      <pointsize>14</pointsize>
+      <bold>true</bold>
+     </font>
+    </property>
+    <property name="text">
+     <string>مؤسسة إدارة وتنمية أموال اليتامى</string>
+    </property>
+    <property name="alignment">
+     <set>Qt::AlignCenter</set>
+    </property>
+    <property name="class" stdset="0">
+     <string/>
+    </property>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>29</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

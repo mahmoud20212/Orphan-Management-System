@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>تقرير للوصي الشرعي</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+        body {
+            font-family: 'Arial', 'Cairo', sans-serif;
+            line-height: 1.5;
+            color: #2c3e50;
+            margin: 0;
+            padding: 0;
+        }
+        /* الترويسة */
+        .header-table {
+            width: 100%;
+            border-bottom: 3px solid #2c3e50;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+        }
+        .logo {
+            width: 85px;
+            height: auto;
+        }
+        .header-text {
+            text-align: center;
+        }
+        .header-text h1 {
+            margin: 0;
+            font-size: 22px;
+            color: #2c3e50;
+        }
+        .header-text p {
+            margin: 3px 0;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        /* عنوان التقرير */
+        .report-title {
+            text-align: center;
+            background-color: #34495e;
+            color: white;
+            padding: 12px;
+            margin: 20px 0;
+            font-size: 18px;
+            font-weight: bold;
+            border-radius: 5px;
+            text-transform: uppercase;
+        }
+
+        /* العناوين الفرعية */
+        .section-header {
+            background-color: #ecf0f1;
+            border-right: 5px solid #2c3e50;
+            color: #2c3e50;
+            padding: 8px 12px;
+            font-size: 16px;
+            font-weight: bold;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+
+        /* شبكة البيانات */
+        .grid-container {
+            display: table;
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 10px;
+        }
+        .grid-row {
+            display: table-row;
+        }
+        .grid-item {
+            display: table-cell;
+            padding: 10px;
+            border: 1px solid #dcdde1;
+            width: 50%;
+            vertical-align: top;
+        }
+        .label {
+            display: block;
+            font-size: 12px;
+            color: #7f8c8d;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        .value {
+            font-size: 15px;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        .ref-box {
+            background-color: #f8f9fa;
+        }
+
+        /* الجداول */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 5px;
+        }
+        .data-table th {
+            background-color: #2c3e50;
+            color: white;
+            border: 1px solid #2c3e50;
+            padding: 10px;
+            text-align: right;
+            font-size: 13px;
+        }
+        .data-table td {
+            border: 1px solid #dcdde1;
+            padding: 8px 10px;
+            font-size: 13px;
+        }
+
+        /* التذييل الموزع */
+        .footer-container {
+            margin-top: 50px;
+            border-top: 2px solid #2c3e50;
+            padding-top: 15px;
+            width: 100%;
+        }
+        .footer-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .footer-table td {
+            border: none !important;
+            text-align: center;
+            vertical-align: top;
+            padding: 10px 0;
+        }
+        .footer-label {
+            font-weight: bold;
+            font-size: 13px;
+            color: #7f8c8d;
+            display: block;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+
+    <table class="header-table">
+        <tr>
+            <td width="20%"><img src="{{ logo_path }}" class="logo"></td>
+            <td class="header-text">
+                <h1>{{ organization }}</h1>
+            </td>
+            <td width="20%" style="text-align: left;"><img src="{{ ps_logo_path }}" class="logo"></td>
+        </tr>
+    </table>
+
+    <div class="report-title">كشف الأيتام التابعين للوصي الشرعي</div>
+
+    <div class="section-header">أولاً: بيانات الوصي الشخصية</div>
+    <div class="grid-container">
+        <div class="grid-row">
+            <div class="grid-item"><span class="label">اسم الوصي:</span><div class="value">{{ guardian.name }}</div></div>
+            <div class="grid-item"><span class="label">رقم الهوية:</span><div class="value">{{ guardian.national_id }}</div></div>
+        </div>
+        <div class="grid-row">
+            <div class="grid-item"><span class="label">رقم الجوال:</span><div class="value">{{ guardian.phone }}</div></div>
+        </div>
+    </div>
+
+    <div class="section-header">ثانياً: قائمة الأيتام المندرجين تحت وصايته</div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>اسم اليتيم</th>
+                <th>رقم الهوية</th>
+                <th>وصي أساسي</th>
+                <th>صلة القرابة</th>
+                <th>بدء الوصاية</th>
+                <th>إنتهاء الوصاية</th>
+                <th>إجمالي الأرصدة</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for orphan in orphans %}
+            <tr>
+                <td style="font-weight: bold;">{{ orphan.name }}</td>
+                <td>{{ orphan.national_id }}</td>
+                <td>{{ orphan.is_primary }}</td>
+                <td>{{ orphan.relation }}</td>
+                <td>{{ orphan.start_date }}</td>
+                <td>{{ orphan.end_date }}</td>
+                <td style="text-align: left; font-family: monospace;">
+                    {% for bal in orphan.balances %}
+                        {{ "{:,.2f}".format(bal.amount) }} {{ bal.currency }}{% if not loop.last %}<br>{% endif %}
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer-container">
+        <table class="footer-table">
+            <tr>
+                <td><span class="label">إعداد</span><div class="value">{{ exported_by }}</div></td>
+                <td><span class="label">توقيع المدير</span><div class="value">...........................</div></td>
+                <td><span class="label">توقيع الموظف</span><div class="value">...........................</div></td>
+            </tr>
+        </table>
+        <div style="text-align: center; margin-top: 30px; font-size: 10px; color: #95a5a6; border-top: 1px solid #eee; padding-top: 5px;">
+            تم استخراج هذا التقرير بتاريخ {{ generated_at }} بواسطة النظام المركزي
+        </div>
+    </div>
+</body>
+</html>

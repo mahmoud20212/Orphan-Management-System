@@ -1,820 +1,572 @@
+from decimal import Decimal
+from datetime import datetime, timezone, date, time
+import database.db as db_module
+from database.models import ActivityLog, DeceasedBalance, DeceasedTransaction, GuardianBalance, GuardianTransaction, Orphan, Guardian, Deceased, Currency, TransactionTypeEnum, OrphanGuardian, GenderEnum, OrphanBalance, Transaction
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text, func
-from database.db import SessionLocal
-from database.models import Deceased, Orphan, OrphanGuardian, Guardian
-from datetime import date
+from sqlalchemy import case, or_, text, func
 
-from database.models import Currency, OrphanBalance, Transaction
+from utils import parse_and_validate_date
+from utils.notes_generator import generate_transaction_note, generate_deceased_transaction_note, generate_orphan_transaction_note
+from utils.distribution import calculate_beneficiary_distribution
 
+# ===== DB Service =====
 class DBService:
     def __init__(self):
-        pass
-
-    def get_db(self) -> Session:
-        return SessionLocal()
-
-    def test_connection(self) -> bool:
+        # Ensure the database engine and SessionLocal are initialized.
         try:
-            db = self.get_db()
-            result = db.execute(text("SELECT 1")).fetchone()
-            db.close()
-            return result[0] == 1
+            session_factory = db_module.SessionLocal
         except Exception:
-            return False
+            session_factory = None
 
-    # Common read and utility methods migrated from the previous implementation
-    def load_deceaseds_with_orphan_count(self):
-        """Fetches the list of deceased persons with the count of their orphans."""
-        db = self.get_db()
-        try:
-            deceaseds = (
-                db.query(
-                    Deceased,
-                    func.count(Orphan.id).label("orphans_count")
-                )
-                .outerjoin(Orphan, Deceased.id == Orphan.deceased_id)
-                .group_by(Deceased.id)
-                .all()
-            )
-            return deceaseds
-        finally:
-            db.close()
+        if not session_factory:
+            # Initialize DB (creates engine and tables) and set SessionLocal
+            engine, db_type = db_module.initialize_database()
+            db_module.engine = engine
+            db_module.DATABASE_TYPE = db_type
+            from sqlalchemy.orm import sessionmaker
+            db_module.SessionLocal = sessionmaker(bind=engine)
+            session_factory = db_module.SessionLocal
 
-    def load_guardians_with_orphan_count(self):
-        """Fetches the list of guardians with the count of their associated orphans."""
-        db = self.get_db()
-        try:
-            guardians = (
-                db.query(
-                    Guardian,
-                    func.count(OrphanGuardian.orphan_id.distinct()).label("orphans_count")
-                )
-                .outerjoin(OrphanGuardian, Guardian.id == OrphanGuardian.guardian_id)
-                .group_by(Guardian.id)
-                .all()
-            )
-            return guardians
-        finally:
-            db.close()
+        self.session = session_factory()
 
-    def load_all_orphans(self):
-        """Fetch all orphans from the database with guardian link preloads."""
-        db = self.get_db()
-        try:
-            orphans = (
-                db.query(Orphan)
-                .outerjoin(OrphanGuardian)
-                .options(
-                    joinedload(Orphan.guardian_links)
-                    .joinedload(OrphanGuardian.guardian)
-                )
-                .all()
-            )
-            return orphans
-        finally:
-            db.close()
+    def close(self):
+        self.session.close()
 
-    def get_deceased_details(self, deceased_id: int):
-        """Fetches details of the deceased, its orphans, and the primary guardian."""
-        db = self.get_db()
-        try:
-            deceased = db.query(Deceased).filter_by(id=deceased_id).first()
-            if not deceased:
-                return None, None, None
+    def find_by_national_id(self, nid):
+        orphan = (
+            self.session.query(Orphan)
+            .filter(Orphan.national_id == nid)
+            .first()
+        )
 
-            orphans = (
-                db.query(Orphan)
-                .options(
-                    joinedload(Orphan.deceased),
-                    joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)
-                )
-                .filter_by(deceased_id=deceased_id)
-                .all()
-            )
+        guardian = self.session.query(Guardian).filter(
+            Guardian.national_id == nid
+        ).first()
 
-            # Attempt to fetch a primary guardian (if any) for the first orphan
-            if orphans:
-                primary_guardian_link = (
-                    db.query(OrphanGuardian)
-                    .join(Guardian)
-                    .filter(OrphanGuardian.orphan_id == orphans[0].id,
-                            OrphanGuardian.is_primary == True)
-                    .first()
-                )
-                guardian = primary_guardian_link.guardian if primary_guardian_link else None
-            else:
-                guardian = None
+        deceased = self.session.query(Deceased).filter(
+            Deceased.national_id == nid
+        ).first()
 
-            return deceased, orphans, guardian
-        finally:
-            db.close()
+        return orphan, guardian, deceased
 
-    def get_orphan_details(self, orphan_id: int):
-        """Fetch an orphan with preloaded relations (deceased, guardian links)."""
-        db = self.get_db()
-        try:
-            orphan = (
-                db.query(Orphan)
-                .options(
-                    joinedload(Orphan.guardian_links)
-                    .joinedload(OrphanGuardian.guardian),
-                    joinedload(Orphan.deceased)
-                )
-                .filter(Orphan.id == orphan_id)
-                .first()
-            )
-            return orphan
-        finally:
-            db.close()
+    def find_by_archive_number(self, archive_num):
+        return self.session.query(Deceased).filter(
+            Deceased.archive_number == archive_num
+        ).first()
 
-    def search_by_national_id(self, national_id: str):
-        """Search for orphan/guardian/deceased by national id."""
-        db = self.get_db()
-        try:
-            orphan = db.query(Orphan).filter(Orphan.national_id == national_id).options(
-                joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)
-            ).first()
+    def find_by_archive_or_id(self, term):
+        # Try national_id first (for backward compatibility)
+        orphan_id = self.session.query(Orphan).filter(Orphan.national_id == term).first()
+        guardian_id = self.session.query(Guardian).filter(Guardian.national_id == term).first()
+        deceased_id = self.session.query(Deceased).filter(Deceased.national_id == term).first()
+        # If not found by national_id, try by name
+        if not orphan_id:
+            orphan_id = self.session.query(Orphan).filter(Orphan.name.ilike(term)).first()
+        if not guardian_id:
+            guardian_id = self.session.query(Guardian).filter(Guardian.name.ilike(term)).first()
+        if not deceased_id:
+            deceased_id = self.session.query(Deceased).filter(Deceased.name.ilike(term)).first()
+        # Also try archive number
+        deceased_arc = self.session.query(Deceased).filter(Deceased.archives_number == term).first()
+        return orphan_id, guardian_id, deceased_id, deceased_arc
 
-            guardian = db.query(Guardian).filter(Guardian.national_id == national_id).first()
-
-            deceased = db.query(Deceased).filter(Deceased.national_id == national_id).first()
-
-            return {"orphan": orphan, "guardian": guardian, "deceased": deceased}
-        finally:
-            db.close()
-
-    def get_orphans_count_by_month(self, months: int = 12):
-        """Return a list of (label, count) for the last `months` months (oldest first)."""
-        db = self.get_db()
-        try:
-            today = date.today()
-            results = []
-            for offset in range(months - 1, -1, -1):
-                total_month = (today.year * 12 + today.month - 1) - offset
-                year = total_month // 12
-                month = total_month % 12 + 1
-                first_day = date(year, month, 1)
-                if month == 12:
-                    next_month = date(year + 1, 1, 1)
-                else:
-                    next_month = date(year, month + 1, 1)
-
-                count = db.query(func.count(Orphan.id)).filter(
-                    Orphan.created_at >= first_day,
-                    Orphan.created_at < next_month
-                ).scalar() or 0
-
-                label = f"{year}-{month:02d}"
-                results.append((label, int(count)))
-            return results
-        finally:
-            db.close()
-
-    def get_minors_count_by_month(self, months: int = 12):
-        """Return a list of (label, count) for the last `months` months counting orphans
-        who were minors (under 18) at month-end and who were registered before month-end."""
-        db = self.get_db()
-        try:
-            from datetime import timedelta
-            today = date.today()
-            results = []
-            for offset in range(months - 1, -1, -1):
-                total_month = (today.year * 12 + today.month - 1) - offset
-                year = total_month // 12
-                month = total_month % 12 + 1
-                first_day = date(year, month, 1)
-                if month == 12:
-                    next_month = date(year + 1, 1, 1)
-                else:
-                    next_month = date(year, month + 1, 1)
-                # month_end is the last day of the month
-                month_end = next_month - timedelta(days=1)
-                # cutoff date: anyone born after cutoff is under 18 at month_end
-                try:
-                    cutoff = date(month_end.year - 18, month_end.month, month_end.day)
-                except ValueError:
-                    # handle leap day fallback to day 28
-                    cutoff = date(month_end.year - 18, month_end.month, 28)
-
-                count = db.query(func.count(Orphan.id)).filter(
-                    Orphan.created_at < next_month,
-                    Orphan.date_of_birth != None,
-                    Orphan.date_of_birth > cutoff
-                ).scalar() or 0
-
-                label = f"{year}-{month:02d}"
-                results.append((label, int(count)))
-            return results
-        finally:
-            db.close()
-
-    def get_age_distribution(self, buckets=None):
-        """Return age distribution counts for given buckets."""
-        if buckets is None:
-            buckets = [(0,5),(6,12),(13,17),(18,200)]
-
-        db = self.get_db()
-        try:
-            rows = db.query(Orphan.date_of_birth).filter(Orphan.date_of_birth != None).all()
-            ages = []
-            today = date.today()
-            for (dob,) in rows:
-                if not dob:
-                    continue
-                age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                ages.append(age)
-
-            distribution = []
-            for (min_a, max_a) in buckets:
-                cnt = sum(1 for a in ages if a is not None and a >= min_a and a <= max_a)
-                if max_a >= 200:
-                    label = f"{min_a}+"
-                else:
-                    label = f"{min_a}-{max_a}"
-                distribution.append((label, cnt))
-
-            return distribution
-        finally:
-            db.close()
-
-    def get_summary_counts(self):
-        """Return a dict with summary counts: orphans, orphans_over_18, guardians, deceased."""
-        db = self.get_db()
-        try:
-            total_orphans = db.query(func.count(Orphan.id)).scalar() or 0
-
-            today = date.today()
-            cutoff = date(today.year - 18, today.month, today.day)
-            orphans_over_18 = db.query(func.count(Orphan.id)).filter(
-                Orphan.date_of_birth != None,
-                Orphan.date_of_birth <= cutoff
-            ).scalar() or 0
-
-            total_guardians = db.query(func.count(Guardian.id)).scalar() or 0
-            total_deceased = db.query(func.count(Deceased.id)).scalar() or 0
-
-            return {
-                "orphans": int(total_orphans),
-                "orphans_over_18": int(orphans_over_18),
-                "guardians": int(total_guardians),
-                "deceased": int(total_deceased)
-            }
-        finally:
-            db.close()
-
-    def _apply_balance_change(self, db: Session, orphan_id: int, currency_id: int, amount_change):
-        """Apply a signed Decimal amount_change to the orphan's balance for the given currency.
-        Creates the OrphanBalance row if it does not exist."""
-        from decimal import Decimal
-        if amount_change is None:
+    def _create_opening_balances(self, db, orphan_id: int, balances: dict, create_transactions: bool = False, note=None):
+        if not balances:
             return
+        currencies = {c.code: c.id for c in db.query(Currency).all()}
+        for currency_code, amount in balances.items():
+            amount_dec = Decimal(amount)
+            if amount_dec == Decimal(0):
+                continue
+            if amount_dec < 0:
+                raise ValueError("لا يمكن أن يكون الرصيد الافتتاحي سالبًا")
+            currency_id = currencies.get(currency_code)
+            if not currency_id:
+                raise ValueError(f"العملة {currency_code} غير معرفة في النظام")
+            existing_balance = db.query(OrphanBalance).filter_by(orphan_id=orphan_id, currency_id=currency_id).first()
+            if existing_balance:
+                continue
+            db.add(OrphanBalance(orphan_id=orphan_id, currency_id=currency_id, balance=amount_dec))
+            if create_transactions:
+                db.add(Transaction(orphan_id=orphan_id, currency_id=currency_id, type=TransactionTypeEnum.deposit, amount=amount_dec, created_date=datetime.now(timezone.utc), note=note))
+
+    def add_deceased_and_orphans(self, deceased_data: dict, guardian_data: dict, orphans_data: list, all_currencies_details: dict, selected_mode: str):
+        db = self.session
         try:
-            change = Decimal(str(amount_change))
-        except Exception:
-            change = Decimal(0)
-
-        ob = db.query(OrphanBalance).filter_by(orphan_id=orphan_id, currency_id=currency_id).first()
-        if not ob:
-            ob = OrphanBalance(orphan_id=orphan_id, currency_id=currency_id, balance=change)
-            db.add(ob)
-        else:
-            # Ensure Decimal arithmetic
-            ob.balance = (ob.balance or 0) + change
-        # Note: commit should be handled by caller
-
-    def get_orphan_balances(self, orphan_id: int):
-        db = self.get_db()
-        try:
-            balances = (
-                db.query(OrphanBalance)
-                .options(joinedload(OrphanBalance.currency))
-                .filter(OrphanBalance.orphan_id == orphan_id)
-                .all()
-            )
-            return balances
-        finally:
-            db.close()
-
-    def get_orphan_transactions(self, orphan_id: int):
-        """
-        Fetch all transactions for a specific orphan,
-        including currency name and transaction type as text.
-        """
-        db = self.get_db()
-        try:
-            transactions = (
-                db.query(Transaction)
-                .options(joinedload(Transaction.currency))
-                .filter(Transaction.orphan_id == orphan_id)
-                .order_by(Transaction.transaction_date.desc())
-                .all()
-            )
-
-            # تحويل البيانات إلى قائمة dicts لسهولة العرض
-            result = []
-            for t in transactions:
-                result.append({
-                    "id": t.id,
-                    "currency": t.currency.name if t.currency else "",
-                    "amount": float(t.amount),
-                    "type": "إيداع" if t.transaction_type == 1 else "سحب",
-                    "date": t.transaction_date,
-                    "note": t.note or ""
-                })
-            return result
-        finally:
-            db.close()
-
-    def get_currency_names(self):
-        """Return list of Currency objects ordered by name."""
-        db = self.get_db()
-        try:
-            currencies = db.query(Currency).order_by(Currency.name).all()
-            return currencies
-        finally:
-            db.close()
-
-    def get_guardian_details(self, guardian_id: int):
-        """Fetches details of a specific guardian and all associated orphans.
-
-        Eager-load related objects (e.g., deceased) so the caller can access them
-        after the DB session is closed without triggering lazy-load errors.
-        """
-        db = self.get_db()
-        try:
-            guardian = db.query(Guardian).filter_by(id=guardian_id).first()
-            if not guardian:
-                return None, None
-
-            # جلب الأيتام المرتبطين بهذا الوصي مع التحميل المسبق للمتوفّى
-            orphans = (
-                db.query(Orphan)
-                .options(
-                    joinedload(Orphan.deceased),
-                    joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)
-                )
-                .join(OrphanGuardian, Orphan.id == OrphanGuardian.orphan_id)
-                .filter(OrphanGuardian.guardian_id == guardian_id)
-                .all()
-            )
-
-            return guardian, orphans
-        finally:
-            db.close()
-
-    def update_guardian_and_orphans(self, guardian_id: int, guardian_data: dict):
-        """
-        Updates guardian details in a single transaction.
-        
-        Args:
-            guardian_id: The ID of the guardian to update.
-            guardian_data: Dictionary containing updated guardian data.
-        """
-        db = self.get_db()
-        try:
-            # 1. Update Guardian Details
-            # Check for duplicate national_id, excluding the current guardian
-            if 'national_id' in guardian_data:
-                existing_guardian = (
-                    db.query(Guardian)
-                    .filter(Guardian.national_id == guardian_data['national_id'])
-                    .filter(Guardian.id != guardian_id)
-                    .first()
-                )
-                if existing_guardian:
-                    raise ValueError(f"National ID {guardian_data['national_id']} is already registered for another guardian.")
-
-            db.query(Guardian).filter_by(id=guardian_id).update(guardian_data)
-
-            db.commit()
-            return True
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def delete_guardian(self, guardian_id: int):
-        """
-        Deletes a guardian record safely.
-        Orphans are NOT deleted.
-        Only orphan-guardian links are removed first.
-        """
-        db = self.get_db()
-        try:
-            # 1️⃣ حذف روابط الوصي مع الأيتام
-            db.query(OrphanGuardian).filter(
-                OrphanGuardian.guardian_id == guardian_id
-            ).delete(synchronize_session=False)
-
-            # 2️⃣ حذف الوصي نفسه
-            deleted = db.query(Guardian).filter(
-                Guardian.id == guardian_id
-            ).delete()
-
-            if deleted == 0:
-                raise Exception("الوصي غير موجود")
-
-            db.commit()
-            return True
-
-        except Exception as e:
-            db.rollback()
-            raise e
-
-        finally:
-            db.close()
-
-    def add_deceased_and_orphans(self, deceased_data: dict, guardian_data: dict, orphans_data: list):
-        """
-        Adds a new deceased person, guardian, and their associated orphans in a single transaction.
-        """
-        db = self.get_db()
-        try:
-            # 1. التحقق من التكرار
-            if db.query(Deceased).filter_by(national_id=deceased_data['national_id']).first():
-                raise ValueError("Deceased person's national ID already exists.")
-            if db.query(Guardian).filter_by(national_id=guardian_data['national_id']).first():
-                raise ValueError("Guardian's national ID already exists.")
-
-            # 2. إنشاء المتوفى
+            # orphans_check = db.query(Orphan).all()
+            # if len(orphans_check) > 5:
+            #     raise ValueError('لقد تجاوزت الحد المسموح به')
+            
             deceased = Deceased(**deceased_data)
             db.add(deceased)
-            db.flush() # للحصول على deceased.id
-
-            # 3. إنشاء الوصي
-            guardian = Guardian(**guardian_data)
-            db.add(guardian)
-            db.flush() # للحصول على guardian.id
-
-            # 4. إنشاء الأيتام وربطهم بالوصي
-            for orphan_data in orphans_data:
-                orphan = Orphan(
-                    deceased_id=deceased.id,
-                    **orphan_data
-                )
-                db.add(orphan)
-                db.flush() # للحصول على orphan.id
-
-                # ربط الوصي
-                link = OrphanGuardian(
-                    orphan_id=orphan.id,
-                    guardian_id=guardian.id,
-                    is_primary=True,
-                    start_date=date.today()
-                )
-                db.add(link)
-
-            db.commit()
-            return True
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def update_deceased_and_orphans(self, deceased_id: int, deceased_data: dict, guardian_data: dict, orphans_data: list):
-        """
-        Updates data for a deceased person, guardian, and their associated orphans in a single transaction.
-        """
-        db = self.get_db()
-        try:
-            deceased = db.query(Deceased).filter_by(id=deceased_id).first()
-            if not deceased:
-                raise ValueError(f"Deceased person with ID {deceased_id} not found.")
-
-            for key, value in deceased_data.items():
-                setattr(deceased, key, value)
-
-            current_orphans = db.query(Orphan).filter_by(deceased_id=deceased_id).all()
-            primary_guardian_link = None
-
-            if current_orphans:
-                primary_guardian_link = (
-                    db.query(OrphanGuardian)
-                    .join(Guardian)
-                    .filter(OrphanGuardian.orphan_id == current_orphans[0].id,
-                            OrphanGuardian.is_primary == True)
-                    .first()
-                )
-
-            if primary_guardian_link:
-                guardian = primary_guardian_link.guardian
-                new_national_id = guardian_data.get('national_id')
-                if new_national_id and new_national_id != guardian.national_id:
-                    existing_guardian = db.query(Guardian).filter(
-                        Guardian.national_id == new_national_id,
-                        Guardian.id != guardian.id
-                    ).first()
-                    if existing_guardian:
-                        raise ValueError("The new guardian's national ID already exists for another guardian.")
-
-                for key, value in guardian_data.items():
-                    setattr(guardian, key, value)
-            else:
-                # If no primary guardian exists, we skip guardian update here
-                pass
-
-            existing_orphan_ids = {o.id for o in current_orphans}
-            updated_orphan_ids = set()
-
-            for orphan_data in orphans_data:
-                orphan_id = orphan_data.pop('id', None)
-                if orphan_id and orphan_id in existing_orphan_ids:
-                    orphan = db.query(Orphan).filter_by(id=orphan_id).first()
-                    if orphan:
-                        for key, value in orphan_data.items():
-                            setattr(orphan, key, value)
-                        updated_orphan_ids.add(orphan_id)
-                elif not orphan_id:
-                    orphan = Orphan(
-                        deceased_id=deceased_id,
-                        **orphan_data
-                    )
+            db.flush()
+            relation_to_orphans = guardian_data.pop('relation', "غير محدد")
+            start_date_val = guardian_data.pop('start_date', datetime.now().date())
+            # Find guardian by name (name is now unique)
+            guardian = db.query(Guardian).filter_by(name=guardian_data['name']).first()
+            if not guardian:
+                guardian = Guardian(**guardian_data)
+                db.add(guardian)
+                db.flush()
+            total_increments = {"ILS": Decimal('0'), "USD": Decimal('0'), "JOD": Decimal('0'), "EUR": Decimal('0')}
+            orphan_transactions_to_link = {"ILS": [], "USD": [], "JOD": [], "EUR": []}
+            for o_dict in orphans_data:
+                o_dict.pop('relation', None)
+                o_dict.pop('start_date', None)
+                o_dict.pop('guardian_name', None)
+                o_dict.pop('guardian_national_id', None)
+                o_dict.pop('is_primary', None)
+                for c in ["ils", "usd", "jod", "eur"]:
+                    o_dict.pop(f'original_{c}_balance', None)
+                target_balances = {"ILS": Decimal(str(o_dict.pop('ils_balance', 0))), "USD": Decimal(str(o_dict.pop('usd_balance', 0))), "JOD": Decimal(str(o_dict.pop('jod_balance', 0))), "EUR": Decimal(str(o_dict.pop('eur_balance', 0)))}
+                # Find orphan by name (name is now unique) instead of national_id
+                orphan = db.query(Orphan).filter_by(name=o_dict['name']).first()
+                if orphan:
+                    for key, value in o_dict.items():
+                        if hasattr(orphan, key): setattr(orphan, key, value)
+                    orphan.deceased_id = deceased.id
+                else:
+                    orphan = Orphan(deceased_id=deceased.id, **o_dict)
                     db.add(orphan)
-                    db.flush()
-                    if primary_guardian_link:
-                        link = OrphanGuardian(
-                            orphan_id=orphan.id,
-                            guardian_id=primary_guardian_link.guardian_id,
-                            is_primary=True,
-                            start_date=date.today()
-                        )
-                        db.add(link)
-
-            orphans_to_delete_ids = existing_orphan_ids - updated_orphan_ids
-            if orphans_to_delete_ids:
-                db.query(OrphanGuardian).filter(OrphanGuardian.orphan_id.in_(orphans_to_delete_ids)).delete(synchronize_session=False)
-                db.query(Orphan).filter(Orphan.id.in_(orphans_to_delete_ids)).delete(synchronize_session=False)
-
-            db.commit()
-            return True
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def delete_deceased(self, deceased_id: int):
-        """Deletes a deceased person, all associated orphans and links, and the guardian if no longer linked to any other orphan."""
-        db = self.get_db()
-        try:
-            orphans = db.query(Orphan).filter_by(deceased_id=deceased_id).all()
-            orphan_ids = [o.id for o in orphans]
-
-            guardian_to_check = None
-            if orphan_ids:
-                primary_link = db.query(OrphanGuardian).filter(
-                    OrphanGuardian.orphan_id == orphan_ids[0],
-                    OrphanGuardian.is_primary == True
-                ).first()
-                if primary_link:
-                    guardian_to_check = primary_link.guardian
-
-            if orphan_ids:
-                db.query(Transaction).filter(Transaction.orphan_id.in_(orphan_ids)).delete(synchronize_session=False)
-                db.query(OrphanBalance).filter(OrphanBalance.orphan_id.in_(orphan_ids)).delete(synchronize_session=False)
-                db.query(OrphanGuardian).filter(OrphanGuardian.orphan_id.in_(orphan_ids)).delete(synchronize_session=False)
-                db.query(Orphan).filter(Orphan.id.in_(orphan_ids)).delete(synchronize_session=False)
-
-            db.query(Deceased).filter_by(id=deceased_id).delete()
-
-            if guardian_to_check:
-                remaining_links = db.query(OrphanGuardian).filter(OrphanGuardian.guardian_id == guardian_to_check.id).count()
-                if remaining_links == 0:
-                    db.delete(guardian_to_check)
-
-            db.commit()
-            return True
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def update_orphan_basic_data(self, orphan_id: int, orphan_data: dict):
-        db = self.get_db()
-        try:
-            orphan = db.query(Orphan).filter(Orphan.id == orphan_id).first()
-            if not orphan:
-                raise ValueError("اليتيم غير موجود")
-
-            for key, value in orphan_data.items():
-                setattr(orphan, key, value)
-
-            db.commit()
-            return True
-
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def add_transaction(self, orphan_id: int, transaction_data: dict):
-        db = self.get_db()
-        from decimal import Decimal
-        try:
-            currency = db.query(Currency).filter(
-                Currency.name == transaction_data["currency"]
-            ).first()
-
-            if not currency:
-                raise ValueError("العملة غير موجودة")
-
-            amount = Decimal(str(transaction_data["amount"]))
-            tx_type = 1 if transaction_data["type"] == "إيداع" else 2
-
-            transaction = Transaction(
-                orphan_id=orphan_id,
-                currency_id=currency.id,
-                amount=amount,
-                transaction_type=tx_type,
-                transaction_date=transaction_data["date"],
-                note=transaction_data.get("note")
-            )
-
-            db.add(transaction)
-
-            effect = amount if tx_type == 1 else -amount
-            self._apply_balance_change(db, orphan_id, currency.id, effect)
-
-            db.commit()
-            return transaction.id
-
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def update_transaction(self, transaction_data: dict):
-        db = self.get_db()
-        from decimal import Decimal
-        try:
-            transaction = db.query(Transaction).filter(
-                Transaction.id == transaction_data["id"]
-            ).first()
-
-            if not transaction:
-                raise ValueError("العملية غير موجودة")
-
-            old_amount = Decimal(str(transaction.amount))
-            old_type = transaction.transaction_type
-            old_currency_id = transaction.currency_id
-
-            new_currency = db.query(Currency).filter(
-                Currency.name == transaction_data["currency"]
-            ).first()
-
-            if not new_currency:
-                raise ValueError("العملة غير موجودة")
-
-            new_amount = Decimal(str(transaction_data["amount"]))
-            new_type = 1 if transaction_data["type"] == "إيداع" else 2
-
-            old_effect = old_amount if old_type == 1 else -old_amount
-            new_effect = new_amount if new_type == 1 else -new_amount
-
-            if old_currency_id != new_currency.id:
-                self._apply_balance_change(db, transaction.orphan_id, old_currency_id, -old_effect)
-                self._apply_balance_change(db, transaction.orphan_id, new_currency.id, new_effect)
-            else:
-                delta = new_effect - old_effect
-                self._apply_balance_change(db, transaction.orphan_id, new_currency.id, delta)
-
-            transaction.currency_id = new_currency.id
-            transaction.amount = new_amount
-            transaction.transaction_type = new_type
-            transaction.transaction_date = transaction_data["date"]
-            transaction.note = transaction_data.get("note")
-
-            db.commit()
-            return True
-
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def delete_transaction(self, transaction_id: int):
-        """Deletes a transaction and reverses its effect on the orphan's balance."""
-        db = self.get_db()
-        from decimal import Decimal
-        try:
-            transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-            if not transaction:
-                raise ValueError("العملية غير موجودة")
-
-            amount = Decimal(str(transaction.amount))
-            effect = amount if transaction.transaction_type == 1 else -amount
-
-            self._apply_balance_change(db, transaction.orphan_id, transaction.currency_id, -effect)
-
-            db.delete(transaction)
-            db.commit()
-            return True
-
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def update_orphan_and_transactions(
-        self,
-        orphan_id: int,
-        orphan_data: dict,
-        transactions_data: list
-    ):
-        db = self.get_db()
-        from decimal import Decimal
-        try:
-            # 1️⃣ تحديث بيانات اليتيم
-            orphan = db.query(Orphan).filter(Orphan.id == orphan_id).first()
-            if not orphan:
-                raise ValueError("اليتيم غير موجود")
-
-            for key, value in orphan_data.items():
-                setattr(orphan, key, value)
-
-            # 2️⃣ إضافة أو تعديل العمليات
-            for trx in transactions_data:
-                currency = db.query(Currency).filter(
-                    Currency.name == trx["currency"]
-                ).first()
-                if not currency:
-                    raise ValueError("عملة غير موجودة")
-
-                if trx.get("id"):  # تعديل
-                    transaction = db.query(Transaction).filter(
-                        Transaction.id == trx["id"]
-                    ).first()
-                    if not transaction:
-                        raise ValueError("عملية غير موجودة")
-
-                    old_amount = Decimal(str(transaction.amount))
-                    old_type = transaction.transaction_type
-                    old_currency_id = transaction.currency_id
-                    old_effect = old_amount if old_type == 1 else -old_amount
-
-                    new_amount = Decimal(str(trx["amount"]))
-                    new_type = 1 if trx["type"] == "إيداع" else 2
-                    new_effect = new_amount if new_type == 1 else -new_amount
-
-                    if old_currency_id != currency.id:
-                        self._apply_balance_change(db, orphan_id, old_currency_id, -old_effect)
-                        self._apply_balance_change(db, orphan_id, currency.id, new_effect)
+                db.flush()
+                for code, new_total in target_balances.items():
+                    currency = db.query(Currency).filter_by(code=code).first()
+                    if not currency: continue
+                    bal_obj = db.query(OrphanBalance).filter_by(orphan_id=orphan.id, currency_id=currency.id).first()
+                    old_val = bal_obj.balance if bal_obj else Decimal('0')
+                    increment = new_total - old_val
+                    if increment > 0:
+                        total_increments[code] += increment
+                        note_text = generate_transaction_note('orphan_share', {
+                            'deceased_name': deceased.name,
+                            'orphan_name': orphan.name,
+                            'currency': code,
+                            'amount': increment
+                        })
+                        new_o_trans = Transaction(orphan_id=orphan.id, currency_id=currency.id, amount=increment, type=TransactionTypeEnum.deposit, note=note_text)
+                        orphan_transactions_to_link[code].append(new_o_trans)
+                    if bal_obj:
+                        bal_obj.balance = new_total
                     else:
-                        delta = new_effect - old_effect
-                        self._apply_balance_change(db, orphan_id, currency.id, delta)
-
-                    transaction.currency_id = currency.id
-                    transaction.amount = new_amount
-                    transaction.transaction_type = new_type
-                    transaction.transaction_date = trx["date"]
-                    transaction.note = trx.get("note")
-
-                else:  # إضافة
-                    amount = Decimal(str(trx["amount"]))
-                    tx_type = 1 if trx["type"] == "إيداع" else 2
-                    transaction = Transaction(
-                        orphan_id=orphan_id,
-                        currency_id=currency.id,
-                        amount=amount,
-                        transaction_type=tx_type,
-                        transaction_date=trx["date"],
-                        note=trx.get("note")
+                        db.add(OrphanBalance(orphan_id=orphan.id, currency_id=currency.id, balance=new_total))
+                db.query(OrphanGuardian).filter_by(orphan_id=orphan.id, is_primary=True).update({"is_primary": False, "end_date": datetime.now().date()})
+                db.add(OrphanGuardian(orphan_id=orphan.id, guardian_id=guardian.id, is_primary=True, relation=relation_to_orphans, start_date=start_date_val))
+            for code, info in all_currencies_details.items():
+                amount_input = Decimal(str(info.get('amount', 0)))
+                distributed = total_increments.get(code, Decimal('0'))
+                if amount_input <= 0 and distributed <= 0: continue
+                currency = db.query(Currency).filter_by(code=code).first()
+                if not currency: continue
+                if amount_input > 0:
+                    note_text = generate_deceased_transaction_note(
+                        'deposit',
+                        amount_input,
+                        currency.name,
+                        distribution_mode=selected_mode,
+                        receipt_details=info
                     )
-                    db.add(transaction)
-
-                    effect = amount if tx_type == 1 else -amount
-                    self._apply_balance_change(db, orphan_id, currency.id, effect)
-
+                    db.add(DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=amount_input, type=TransactionTypeEnum.deposit, receipt_number=info.get('receipt_number'), payer_name=info.get('payer_name'), payment_method=info.get('payment_method') or "نقداً", check_number=info.get('check_number'), due_date=parse_and_validate_date(info.get('due_date')) if info.get('due_date') else None, bank_name=info.get('bank_name'), reference_number=info.get('reference_number'), note=note_text))
+                if distributed > 0:
+                    note_text = generate_deceased_transaction_note(
+                        'distribute',
+                        distributed,
+                        currency.name,
+                        distribution_mode=selected_mode
+                    )
+                    deceased_withdraw_txn = DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=distributed, type=TransactionTypeEnum.withdraw, payment_method="---", note=note_text)
+                    db.add(deceased_withdraw_txn)
+                    db.flush()
+                    for o_trans in orphan_transactions_to_link[code]:
+                        o_trans.deceased_transaction_id = deceased_withdraw_txn.id
+                        db.add(o_trans)
+                db.add(DeceasedBalance(deceased_id=deceased.id, currency_id=currency.id, balance=amount_input - distributed))
             db.commit()
-            return True
-
+            return {'deceased_id': deceased.id}
         except Exception as e:
             db.rollback()
+            print(f"Database Error: {e}")
             raise e
-        finally:
-            db.close()
-    
-    def load_orphans_older_than_or_equal_18(self):
-        db = self.get_db()
+
+    def get_currencies(self):
+        return self.session.query(Currency).all()
+
+    def get_deceased_people_list(self):
+        db = self.session
+        return db.query(Deceased, func.count(Orphan.id).label("orphans_count")).outerjoin(Orphan, Deceased.id == Orphan.deceased_id).group_by(Deceased.id).all()
+
+    def get_guardians_list(self):
+        db = self.session
+        return db.query(Guardian, func.count(OrphanGuardian.orphan_id.distinct()).label("orphans_count")).outerjoin(OrphanGuardian, Guardian.id == OrphanGuardian.guardian_id).group_by(Guardian.id).all()
+
+    def get_orphans_list(self):
+        return self.session.query(Orphan).outerjoin(OrphanGuardian).options(joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)).all()
+
+    def get_orphans_older_than_or_equal_18_list(self):
+        today = date.today()
+        cutoff_date = date(today.year - 18, today.month, today.day)
+        return self.session.query(Orphan).filter(Orphan.date_birth <= cutoff_date).all()
+
+    def paginate(self, query, page: int = 1, per_page: int = 20):
+        total = query.count()
+        items = query.limit(per_page).offset((page - 1) * per_page).all()
+        return {"items": items, "total": total, "page": page, "per_page": per_page, "pages": (total + per_page - 1) // per_page}
+
+    def get_deceased_people_paginated(self, page=1, per_page=20):
+        query = self.session.query(Deceased, func.count(Orphan.id).label("orphans_count")).outerjoin(Orphan, Deceased.id == Orphan.deceased_id).group_by(Deceased.id).order_by(Deceased.id.desc())
+        return self.paginate(query, page, per_page)
+
+    def get_guardians_paginated(self, page=1, per_page=20):
+        query = self.session.query(Guardian, func.count(OrphanGuardian.orphan_id.distinct()).label("orphans_count")).outerjoin(OrphanGuardian, Guardian.id == OrphanGuardian.guardian_id).group_by(Guardian.id).order_by(Guardian.id.desc())
+        return self.paginate(query, page, per_page)
+
+    def get_orphans_paginated(self, page=1, per_page=20):
+        query = self.session.query(Orphan).outerjoin(OrphanGuardian).options(joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)).order_by(Orphan.id.desc())
+        return self.paginate(query, page, per_page)
+
+    def get_orphans_older_than_or_equal_18_paginated(self, page=1, per_page=20):
+        today = date.today()
+        cutoff_date = date(today.year - 18, today.month, today.day)
+        query = self.session.query(Orphan).filter(Orphan.date_birth <= cutoff_date).order_by(Orphan.id.desc())
+        return self.paginate(query, page, per_page)
+
+    def get_activity_logs_paginated(self, page=1, per_page=20):
+        query = self.session.query(ActivityLog).order_by(ActivityLog.id.desc())
+        return self.paginate(query, page, per_page)
+
+    def get_summary_counts(self):
+        db = self.session
+        total_orphans = db.query(func.count(Orphan.id)).scalar() or 0
+        today = date.today()
+        cutoff = date(today.year - 18, today.month, today.day)
+        # Only count orphans where date_birth is not NULL and is <= cutoff
+        orphans_over_18 = db.query(func.count(Orphan.id)).filter(Orphan.date_birth != None, Orphan.date_birth <= cutoff).scalar() or 0
+        total_guardians = db.query(func.count(Guardian.id)).scalar() or 0
+        total_deceased = db.query(func.count(Deceased.id)).scalar() or 0
+        return {"orphans": int(total_orphans), "orphans_over_18": int(orphans_over_18), "guardians": int(total_guardians), "deceased": int(total_deceased)}
+
+    def search_guardian(self, text):
+        return self.session.query(Guardian).filter(or_(Guardian.national_id.ilike(f"%{text}%"), Guardian.name.ilike(f"%{text}%"))).limit(20).all()
+
+    def search_deceased(self, text):
+        return self.session.query(Deceased).filter(or_(Deceased.national_id.ilike(f"%{text}%"), Deceased.name.ilike(f"%{text}%"))).limit(20).all()
+
+    def search_orphan(self, text, _all=False, linked=False):
+        query = self.session.query(Orphan)
+        if not _all:
+            query = query.filter(Orphan.deceased_id == None) if linked is False else query.filter(Orphan.deceased_id != None)
+        return query.filter(or_(Orphan.national_id.ilike(f"%{text}%"), Orphan.name.ilike(f"%{text}%"))).limit(20).all()
+
+    def check_if_orphan_exists(self, name: str) -> bool:
+        """Check if orphan exists by NAME (primary key for duplicates)"""
+        return self.session.query(Orphan).filter(Orphan.name == name).first() is not None
+
+    def get_orphan_by_name(self, name):
+        """Get orphan by NAME (primary lookup)"""
+        return self.session.query(Orphan).filter_by(name=name).first()
+
+    def get_orphan_by_national_id(self, national_id):
+        """Legacy: Get orphan by national_id (may return multiple, use with caution)"""
+        return self.session.query(Orphan).filter_by(national_id=national_id).first()
+
+    def check_if_deceased_exists(self, name: str) -> bool:
+        """Check if deceased exists by NAME (primary key for duplicates)"""
+        return self.session.query(Deceased).filter(Deceased.name == name).first() is not None
+
+    def get_deceased_by_name(self, name):
+        """Get deceased by NAME (primary lookup)"""
+        return self.session.query(Deceased).filter_by(name=name).first()
+
+    def check_if_guardian_exists(self, name: str) -> bool:
+        """Check if guardian exists by NAME (primary key for duplicates)"""
+        return self.session.query(Guardian).filter(Guardian.name == name).first() is not None
+
+    def get_guardian_by_name(self, name):
+        """Get guardian by NAME (primary lookup)"""
+        return self.session.query(Guardian).filter_by(name=name).first()
+
+    def get_orphan_details(self, orphan_id: int):
+        return self.session.query(Orphan).options(joinedload(Orphan.deceased), joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian), joinedload(Orphan.balances).joinedload(OrphanBalance.currency)).filter(Orphan.id == orphan_id).first()
+
+    def get_deceased_details(self, deceased_id: int):
+        deceased = self.session.query(Deceased).options(joinedload(Deceased.orphans).joinedload(Orphan.balances).joinedload(OrphanBalance.currency)).filter(Deceased.id == deceased_id).first()
+        guardian = None
+        if deceased and deceased.orphans:
+            primary_link = self.session.query(OrphanGuardian).filter_by(orphan_id=deceased.orphans[0].id, is_primary=True).first()
+            if primary_link:
+                guardian = primary_link.guardian
+        return deceased, (deceased.orphans if deceased else []), guardian
+
+    def get_guardian_details(self, guardian_id: int):
+        guardian = self.session.query(Guardian).filter_by(id=guardian_id).first()
+        if not guardian:
+            return None, []
+        orphans = self.session.query(Orphan).join(OrphanGuardian).options(joinedload(Orphan.balances).joinedload(OrphanBalance.currency)).filter(OrphanGuardian.guardian_id == guardian_id).all()
+        return guardian, orphans
+
+    def get_orphan_balances(self, orphan_id: int):
+        return self.session.query(OrphanBalance).options(joinedload(OrphanBalance.currency)).filter_by(orphan_id=orphan_id).all()
+
+    def get_orphan_transactions(self, orphan_id: int, limit: int = 15):
+        return self.session.query(Transaction).options(joinedload(Transaction.currency)).filter_by(orphan_id=orphan_id).order_by(Transaction.created_date.desc()).limit(limit).all()
+
+    def get_orphans_by_date_range(self, start_dt, end_dt):
+        end_dt_full = datetime.combine(end_dt.date(), time.max)
+        return self.session.query(Orphan).options(joinedload(Orphan.balances).joinedload(OrphanBalance.currency), joinedload(Orphan.guardian_links).joinedload(OrphanGuardian.guardian)).filter(Orphan.created_at >= start_dt).filter(Orphan.created_at <= end_dt_full).all()
+
+    def add_single_deceased_transaction(self, data):
+        session = self.session
         try:
-            today = date.today()
-            cutoff_date = date(today.year - 18, today.month, today.day)
+            should_distribute = data.pop('should_distribute', False)
+            dist_mode = data.pop('distribution_mode', "بالتساوي")
+            include_guardian_share = data.pop('include_guardian_share', False)
+            new_txn = DeceasedTransaction(**data)
+            session.add(new_txn)
+            self._update_deceased_balance(session, data['deceased_id'], data['currency_id'], data['amount'], data['type'])
+            if should_distribute:
+                orphans = session.query(Orphan).filter_by(deceased_id=data['deceased_id']).all()
+                if not orphans:
+                    raise ValueError("لا يوجد أيتام مسجلون لتوزيع المبلغ عليهم.")
 
-            return (
-                db.query(Orphan)
-                .filter(Orphan.date_of_birth <= cutoff_date)
-                .all()
-            )
+                beneficiaries = [
+                    {
+                        "kind": "orphan",
+                        "id": o.id,
+                        "gender": o.gender,
+                        "name": o.name,
+                    }
+                    for o in orphans
+                ]
 
+                guardian_for_share = None
+                guardian_link_for_share = None
+                if include_guardian_share:
+                    guardian_link_for_share = self._get_primary_guardian_link_for_deceased(session, data['deceased_id'])
+                    guardian_for_share = guardian_link_for_share.guardian if guardian_link_for_share else None
+                    if guardian_for_share:
+                        beneficiaries.append({
+                            "kind": "guardian",
+                            "id": guardian_for_share.id,
+                            "gender": None,
+                            "name": guardian_for_share.name,
+                        })
+
+                shares = self._calculate_shares(beneficiaries, data['amount'], dist_mode)
+                linked_user_note = (data.get('note') or '').strip() or None
+                auto_distribution_note = f"توزيع ({dist_mode}) - المبلغ الموزع: {Decimal(str(data['amount'])):,.2f}"
+                if data['type'] == 'deposit':
+                    withdraw_txn = DeceasedTransaction(
+                        deceased_id=data['deceased_id'],
+                        currency_id=data['currency_id'],
+                        amount=data['amount'],
+                        type='withdraw',
+                        payment_method=data['payment_method'],
+                        note=auto_distribution_note,
+                    )
+                    session.add(withdraw_txn)
+                    self._update_deceased_balance(session, data['deceased_id'], data['currency_id'], data['amount'], 'withdraw')
+                    session.flush()
+                    parent_txn_id = withdraw_txn.id
+                else:
+                    session.flush()
+                    parent_txn_id = new_txn.id
+
+                for beneficiary in beneficiaries:
+                    share_amount = Decimal(str(shares.get((beneficiary['kind'], beneficiary['id']), 0)))
+                    if share_amount <= 0: continue
+
+                    if beneficiary['kind'] == 'orphan':
+                        new_orphan_txn = Transaction(
+                            orphan_id=beneficiary['id'],
+                            currency_id=data['currency_id'],
+                            amount=share_amount,
+                            type=TransactionTypeEnum.deposit,
+                            deceased_transaction_id=parent_txn_id,
+                            created_date=datetime.now(timezone.utc),
+                            note=linked_user_note,
+                        )
+                        session.add(new_orphan_txn)
+                        self._update_orphan_balance(session, beneficiary['id'], data['currency_id'], share_amount)
+                    else:
+                        new_guardian_txn = GuardianTransaction(
+                            guardian_id=beneficiary['id'],
+                            deceased_id=data['deceased_id'],
+                            currency_id=data['currency_id'],
+                            deceased_transaction_id=parent_txn_id,
+                            amount=share_amount,
+                            type=TransactionTypeEnum.deposit,
+                            created_date=datetime.now(timezone.utc),
+                            created_at=datetime.now(timezone.utc),
+                            note=linked_user_note,
+                        )
+                        session.add(new_guardian_txn)
+                        self._update_guardian_balance(session, beneficiary['id'], data['currency_id'], share_amount)
+            session.commit()
+            return True
         except Exception as e:
-            print("Error loading orphans older than 18:", e)
+            session.rollback()
+            print(f"Error: {e}")
+            return False
+
+    def _build_distribution_note(self, base_note, beneficiaries, shares, mode: str):
+        base = (base_note or "").strip()
+        beneficiary_chunks = []
+        for beneficiary in beneficiaries:
+            key = (beneficiary.get('kind'), beneficiary.get('id'))
+            amount = Decimal(str(shares.get(key, 0)))
+            if amount <= 0:
+                continue
+
+            if beneficiary.get('kind') == 'guardian':
+                label = f"الوصي {beneficiary.get('name') or ''}".strip()
+            else:
+                label = beneficiary.get('name') or f"يتيم {beneficiary.get('id')}"
+            beneficiary_chunks.append(f"{label}: {amount:,.2f}")
+
+        details = f"تفاصيل التوزيع ({mode}): "
+        details += "، ".join(beneficiary_chunks) if beneficiary_chunks else "لا توجد حصص"
+
+        final_note = f"{base} | {details}" if base else details
+        return final_note[:250]
+
+    def _update_orphan_balance(self, session, orphan_id, currency_id, amount):
+        bal = session.query(OrphanBalance).filter_by(orphan_id=orphan_id, currency_id=currency_id).first()
+        if bal:
+            bal.balance += amount
+        else:
+            session.add(OrphanBalance(orphan_id=orphan_id, currency_id=currency_id, balance=amount))
+
+    def _update_guardian_balance(self, session, guardian_id, currency_id, amount):
+        bal = session.query(GuardianBalance).filter_by(guardian_id=guardian_id, currency_id=currency_id).first()
+        if bal:
+            bal.balance += amount
+        else:
+            session.add(GuardianBalance(guardian_id=guardian_id, currency_id=currency_id, balance=amount))
+
+    def _get_primary_guardian_for_deceased(self, session, deceased_id):
+        primary_link = self._get_primary_guardian_link_for_deceased(session, deceased_id)
+        return primary_link.guardian if primary_link else None
+
+    def _get_primary_guardian_link_for_deceased(self, session, deceased_id):
+        primary_link = (
+            session.query(OrphanGuardian)
+            .join(Orphan, Orphan.id == OrphanGuardian.orphan_id)
+            .filter(Orphan.deceased_id == deceased_id, OrphanGuardian.is_primary == True)
+            .first()
+        )
+        if primary_link:
+            return primary_link
+
+        any_link = (
+            session.query(OrphanGuardian)
+            .join(Orphan, Orphan.id == OrphanGuardian.orphan_id)
+            .filter(Orphan.deceased_id == deceased_id)
+            .first()
+        )
+        return any_link
+
+    def _update_deceased_balance(self, session, deceased_id, currency_id, amount, txn_type):
+        balance_record = session.query(DeceasedBalance).filter_by(deceased_id=deceased_id, currency_id=currency_id).first()
+        is_deposit = (txn_type == 'deposit')
+        if balance_record:
+            balance_record.balance += amount if is_deposit else -amount
+            balance_record.updated_at = datetime.now()
+        else:
+            session.add(DeceasedBalance(deceased_id=deceased_id, currency_id=currency_id, balance=amount if is_deposit else -amount))
+
+    def _calculate_shares(self, beneficiaries, total_amount, mode):
+        return calculate_beneficiary_distribution(beneficiaries, total_amount, mode)
+
+    def get_deceased_balance(self, deceased_id, currency_code):
+        try:
+            result = self.session.query(DeceasedBalance.balance).join(Currency).filter(DeceasedBalance.deceased_id == deceased_id, Currency.code == currency_code).first()
+            return result[0] if result else Decimal('0.00')
+        except Exception as e:
+            print(f"خطأ أثناء جلب الرصيد: {e}")
+            return Decimal('0.00')
+    
+    def get_deceased_summary(self, deceased_id):
+        session = self.session
+        # استعلام لجلب إجمالي الإيداعات والسحوبات من جدول العمليات
+        transactions = session.query(
+            DeceasedTransaction.currency_id,
+            func.sum(case((DeceasedTransaction.type == TransactionTypeEnum.deposit, DeceasedTransaction.amount), else_=0)).label('total_deposit'),
+            func.sum(case((DeceasedTransaction.type == TransactionTypeEnum.withdraw, DeceasedTransaction.amount), else_=0)).label('total_withdraw')
+        ).filter(DeceasedTransaction.deceased_id == deceased_id).group_by(DeceasedTransaction.currency_id).subquery()
+
+        # الربط مع جدول العملات وجدول الأرصدة الحالي
+        results = session.query(
+            Currency.name,
+            func.coalesce(transactions.c.total_deposit, 0).label('deposited'),
+            func.coalesce(transactions.c.total_withdraw, 0).label('withdrawn'),
+            func.coalesce(DeceasedBalance.balance, 0).label('available')
+        ).outerjoin(
+            DeceasedBalance,
+            (DeceasedBalance.currency_id == Currency.id) & (DeceasedBalance.deceased_id == deceased_id)
+        )\
+        .outerjoin(transactions, transactions.c.currency_id == Currency.id)\
+        .all()
+
+        return results
+    
+    def get_orphan_summary(self, orphan_id):
+        session = self.session
+        # حساب العمليات (إيداع/سحب)
+        transactions = session.query(
+            Transaction.currency_id,
+            func.sum(case((Transaction.type == TransactionTypeEnum.deposit, Transaction.amount), else_=0)).label('total_deposit'),
+            func.sum(case((Transaction.type == TransactionTypeEnum.withdraw, Transaction.amount), else_=0)).label('total_withdraw')
+        ).filter(Transaction.orphan_id == orphan_id).group_by(Transaction.currency_id).subquery()
+
+        # الاستعلام النهائي للجدول
+        results = session.query(
+            Currency.name,
+            func.coalesce(transactions.c.total_deposit, 0).label('deposited'),
+            func.coalesce(transactions.c.total_withdraw, 0).label('withdrawn'),
+            func.coalesce(OrphanBalance.balance, 0).label('available')
+        ).outerjoin(
+            OrphanBalance,
+            (OrphanBalance.currency_id == Currency.id) & (OrphanBalance.orphan_id == orphan_id)
+        )\
+        .outerjoin(transactions, transactions.c.currency_id == Currency.id)\
+        .all()
+
+        return results
+    
+    def get_guardian_summary(self, guardian_id):
+        session = self.session
+        transactions = session.query(
+            GuardianTransaction.currency_id,
+            func.sum(case((GuardianTransaction.type == TransactionTypeEnum.deposit, GuardianTransaction.amount), else_=0)).label('total_deposit'),
+            func.sum(case((GuardianTransaction.type == TransactionTypeEnum.withdraw, GuardianTransaction.amount), else_=0)).label('total_withdraw')
+        ).filter(GuardianTransaction.guardian_id == guardian_id).group_by(GuardianTransaction.currency_id).subquery()
+        
+        results = session.query(
+            Currency.name,
+            func.coalesce(transactions.c.total_deposit, 0).label('deposited'),
+            func.coalesce(transactions.c.total_withdraw, 0).label('withdrawn'),
+            func.coalesce(GuardianBalance.balance, 0).label('available')
+        ).outerjoin(
+            GuardianBalance,
+            (GuardianBalance.currency_id == Currency.id) & (GuardianBalance.guardian_id == guardian_id)
+        )\
+        .outerjoin(transactions, transactions.c.currency_id == Currency.id)\
+        .all()
+        
+        return results
+
+    def search_deceased_in_db(self, search_term):
+        """البحث في قاعدة البيانات بناءً على الاسم أو الهوية أو الأرشيف"""
+        session = self.session
+        
+        if not search_term or len(search_term) < 2:
             return []
-        finally:
-            db.close()
+        
+        # البحث باستخدام OR لجمع كافة الاحتمالات
+        results = session.query(Deceased).filter(
+            or_(
+                Deceased.name.like(f"%{search_term}%"),
+                Deceased.national_id.like(f"%{search_term}%"),
+                Deceased.archives_number.like(f"%{search_term}%")
+            )
+        ).limit(15).all() # تحديد عدد النتائج لسرعة الاستجابة
+        return results

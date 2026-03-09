@@ -1,0 +1,10 @@
+pyinstaller --onefile --windowed ^
+--add-data "ui;ui" ^
+--add-data "assets;assets" ^
+--add-data "templates;templates" ^
+--add-data "database;database" ^
+--add-data "components;components" ^
+--add-data "controllers;controllers" ^
+--add-data "services;services" ^
+--add-data "utils;utils" ^
+main.py

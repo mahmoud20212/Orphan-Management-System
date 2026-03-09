@@ -1,368 +1,288 @@
-from jinja2 import Environment, FileSystemLoader
 import os
 from datetime import date, datetime
 from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+from decimal import Decimal
+import pandas as pd
 
-# Try to use WeasyPrint, else pdfkit
+from utils import calculate_age
+from services.db_services import DBService
+
+# المكتبات المطلوبة لدعم العربية والـ PDF
 try:
     from weasyprint import HTML
     RENDERER = "weasy"
 except Exception:
-    try:
-        import pdfkit
-        RENDERER = "pdfkit"
-    except Exception:
-        RENDERER = None
+    import pdfkit
+    RENDERER = "pdfkit"
 
-from .db_services import DBService
+# مسار جذر المشروع
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEMPLATE_PATH = os.path.join(PROJECT_ROOT, "templates")
+ASSETS_IMAGES = Path(os.path.join(PROJECT_ROOT, "assets", "images")).resolve()
 
-# Initialize Jinja environment pointing to project templates folder
-try:
-    env = Environment(loader=FileSystemLoader(os.path.join(os.path.dirname(__file__), "..", "templates")))
-except Exception:
-    env = None
+env = Environment(loader=FileSystemLoader(TEMPLATE_PATH))
 
-TEMPLATE_MAP = {
-    "orphan": "orphan_report.html",
-    "deceased": "family_report.html",
-    "guardian": "family_report.html",
-    "monthly_minors": "monthly_minors_report.html",
-}
+logo_path = (ASSETS_IMAGES / "logo.png").as_uri() if (ASSETS_IMAGES / "logo.png").exists() else None
+ps_logo_path = (ASSETS_IMAGES / "ps_logo.png").as_uri() if (ASSETS_IMAGES / "ps_logo.png").exists() else None
 
 
 def _format_date(d):
-    if not d:
-        return ""
-    if isinstance(d, date):
+    if not d: return "---"
+    if isinstance(d, (date, datetime)):
         return d.strftime("%Y/%m/%d")
-    try:
-        return d.strftime("%Y/%m/%d")
-    except Exception:
-        return str(d)
-
-
-class ReportError(Exception):
-    pass
-
-
-def _balances_summary(balances):
-    totals = {}
-    for b in balances:
-        cur = b.currency.name
-        totals[cur] = totals.get(cur, 0) + float(b.balance)
-    return [{"currency": k, "amount": v} for k, v in totals.items()]
-
-
-def _format_tx(t):
-    def _g(x, a):
-        if x is None:
-            return None
-        if isinstance(x, dict):
-            return x.get(a)
-        return getattr(x, a, None)
-    
-    print(t)
-    
-    return {
-        "id": _g(t, 'id'),
-        "type": "إيداع" if _g(t, 'type') == 'إيداع' else "سحب",
-        "amount": float(_g(t, 'amount') or 0),
-        "currency": _g(t, 'currency') or '',
-        "date": _format_date(_g(t, 'date')),
-        "note": _g(t, 'note') or ''
-    }
+    return str(d)
 
 
 def _get_attr(obj, name, default=None):
-    if obj is None:
-        return default
-    if isinstance(obj, dict):
-        return obj.get(name, default)
+    if obj is None: return default
     return getattr(obj, name, default)
 
 
-def fetch_entity_data(entity_type: str, entity_id: int, db_service: DBService):
-    """Return context dict for templates based on entity_type and id."""
+def _build_full_balances(balances, all_currencies):
+    """Return list of balances for all currencies (include 0.0 for missing)."""
+    bal_map = {}
+    for b in balances:
+        cur = getattr(b, 'currency', None)
+        cid = getattr(cur, 'id', None) if cur is not None else getattr(b, 'currency_id', None)
+        try:
+            bal_map[int(cid)] = float(b.balance)
+        except Exception:
+            # ignore entries without usable currency id or balance
+            continue
 
-    assets_dir = Path(os.path.join(os.path.dirname(__file__), "..", "assets", "images")).resolve()
-    logo_file = (assets_dir / "logo.png")
-    ps_logo_file = (assets_dir / "ps_logo.png")
-    logo_path = logo_file.as_uri() if logo_file.exists() else None
-    ps_logo_path = ps_logo_file.as_uri() if ps_logo_file.exists() else None
+    result = []
+    for curr in all_currencies:
+        amt = float(bal_map.get(curr.id, 0.0))
+        name = getattr(curr, 'name', None) or getattr(curr, 'code', str(getattr(curr, 'id', '')))
+        result.append({"currency": name, "amount": amt})
+    return result
 
-    ctx_common = {
+
+def fetch_entity_data(entity_type: str, entity_id: int, db_service: DBService, user):
+    common = {
         "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
         "organization": "مؤسسة إدارة وتنمية أموال اليتامى",
+        "exported_by": user.name,
         "logo_path": logo_path,
         "ps_logo_path": ps_logo_path,
     }
 
-    if not logo_path:
-        print("[services.reporting] logo.png not found in assets/images; templates will not show organization logo.")
-    if not ps_logo_path:
-        print("[services.reporting] ps_logo.png not found in assets/images; Palestine emblem will not show.")
-
     if entity_type == "orphan":
         orphan = db_service.get_orphan_details(entity_id)
-        if not orphan:
-            raise ReportError("يتيم غير موجود")
+        if not orphan: return None
 
-        orphan_id = _get_attr(orphan, 'id')
-        balances = db_service.get_orphan_balances(orphan_id)
-        balances_list = [{"currency": b.currency.name, "amount": float(b.balance)} for b in balances]
-        balances_total = _balances_summary(balances)
-        txs = db_service.get_orphan_transactions(orphan_id)[:10]
-        tx_list = [_format_tx(t) for t in txs]
+        gender_display = "غير محدد"
+        if orphan.gender:
+            if orphan.gender.name == "male": gender_display = "ذكر"
+            elif orphan.gender.name == "female": gender_display = "أنثى"
 
-        primary_guardian = next((link.guardian for link in getattr(orphan, 'guardian_links', []) if getattr(link, 'is_primary', False)), None)
-        deceased = _get_attr(orphan, 'deceased')
-
-        context = {
-            **ctx_common,
-            "orphan": {
-                "id": _get_attr(orphan, 'id'),
-                "name": _get_attr(orphan, 'name'),
-                "birth_date": _format_date(_get_attr(orphan, 'date_of_birth')),
-                "national_id": _get_attr(orphan, 'national_id'),
-            },
-            "balances": balances_list,
-            "balances_total": balances_total,
-            "transactions": tx_list,
-            "deceased": None,
-            "guardian": None,
+        deceased_obj = orphan.deceased
+        deceased_info = {
+            "name": _get_attr(deceased_obj, 'name', '---'),
+            "national_id": _get_attr(deceased_obj, 'national_id', '---'),
+            "death_date": _format_date(_get_attr(deceased_obj, 'date_of_death')),
+            "account_number": _get_attr(orphan, 'account_number', '---'),
+            "archives_number": _get_attr(orphan, 'archives_number', '---'),
         }
 
-        if deceased:
-            context["deceased"] = {
-                "id": _get_attr(deceased, 'id'),
-                "name": _get_attr(deceased, 'name'),
-                "death_date": _format_date(_get_attr(deceased, 'date_of_death')),
-                "national_id": _get_attr(deceased, 'national_id'),
+        all_currencies = db_service.get_currencies()
+        balances = _build_full_balances(orphan.balances, all_currencies)
+        guardian_history = []
+        primary_guardian = None
+        sorted_links = sorted(orphan.guardian_links, key=lambda x: x.start_date or date.min, reverse=True)
+
+        for link in sorted_links:
+            g_data = {
+                "name": link.guardian.name,
+                "national_id": link.guardian.national_id or "---",
+                "phone": link.guardian.phone or "---",
+                "relation": link.relation or "---",
+                "start_date": _format_date(link.start_date),
+                "end_date": _format_date(link.end_date) if link.end_date else "مستمر",
+                "is_primary": link.is_primary
             }
+            guardian_history.append(g_data)
+            if link.is_primary:
+                primary_guardian = g_data
 
-        if primary_guardian:
-            context["guardian"] = {
-                "id": _get_attr(primary_guardian, 'id'),
-                "name": _get_attr(primary_guardian, 'name'),
-                "national_id": _get_attr(primary_guardian, 'national_id'),
-                "phone": _get_attr(primary_guardian, 'phone') or '',
-                "appointment_date": _format_date(_get_attr(primary_guardian, 'appointment_date')),
-            }
-
-        return context
-
-    if entity_type == "deceased":
-        deceased, orphans, guardian = db_service.get_deceased_details(entity_id)
-        if not deceased:
-            raise ReportError("المتوفّى غير موجود")
-
-        children = []
-        for o in orphans:
-            oid = _get_attr(o, 'id')
-            balances = db_service.get_orphan_balances(oid)
-            balances_list = [{"currency": b.currency.name, "amount": float(b.balance)} for b in balances]
-            balances_total = _balances_summary(balances)
-            txs = db_service.get_orphan_transactions(oid)[:5]
-            tx_list = [_format_tx(t) for t in txs]
-            children.append({
-                "id": _get_attr(o, 'id'),
-                "name": _get_attr(o, 'name'),
-                "birth_date": _format_date(_get_attr(o, 'date_of_birth')),
-                "national_id": _get_attr(o, 'national_id'),
-                "balances": balances_list,
-                "balances_total": balances_total,
-                "recent_transactions": tx_list,
-                "deceased": _get_attr(o, 'deceased')
-            })
-
-        context = {
-            **ctx_common,
-            "deceased": {
-                "id": _get_attr(deceased, 'id'),
-                "name": _get_attr(deceased, 'name'),
-                "death_date": _format_date(_get_attr(deceased, 'date_of_death')),
-                "national_id": _get_attr(deceased, 'national_id'),
-            },
-            "guardian": None,
-            "children": children,
+        return {
+            **common,
+            "orphan": {"name": orphan.name, "national_id": orphan.national_id or "---", "birth_date": _format_date(orphan.date_birth), "gender": gender_display, "phone": orphan.phone or '---'},
+            "deceased": deceased_info,
+            "primary_guardian": primary_guardian,
+            "guardian_history": guardian_history,
+            "balances": balances
         }
 
-        if guardian:
-            context["guardian"] = {
-                "id": _get_attr(guardian, 'id'),
-                "name": _get_attr(guardian, 'name'),
-                "national_id": _get_attr(guardian, 'national_id'),
-                "phone": _get_attr(guardian, 'phone') or '',
-                "appointment_date": _format_date(_get_attr(guardian, 'appointment_date')),
-            }
-
-        return context
-
-    if entity_type == "guardian":
-        guardian, orphans = db_service.get_guardian_details(entity_id)
-        if not guardian:
-            raise ReportError("الوصي غير موجود")
-
-        children = []
-        for o in orphans:
-            oid = _get_attr(o, 'id')
-            balances = db_service.get_orphan_balances(oid)
-            balances_list = [{"currency": b.currency.name, "amount": float(b.balance)} for b in balances]
-            balances_total = _balances_summary(balances)
-            txs = db_service.get_orphan_transactions(oid)[:5]
-            tx_list = [_format_tx(t) for t in txs]
-            children.append({
-                "id": _get_attr(o, 'id'),
-                "name": _get_attr(o, 'name'),
-                "birth_date": _format_date(_get_attr(o, 'date_of_birth')),
-                "national_id": _get_attr(o, 'national_id'),
-                "balances": balances_list,
-                "balances_total": balances_total,
-                "recent_transactions": tx_list,
-                "deceased": _get_attr(o, 'deceased')
-            })
-
-        context = {
-            **ctx_common,
-            "guardian": {
-                "id": _get_attr(guardian, 'id'),
-                "name": _get_attr(guardian, 'name'),
-                "national_id": _get_attr(guardian, 'national_id'),
-                "phone": _get_attr(guardian, 'phone') or '',
-                "appointment_date": _format_date(_get_attr(guardian, 'appointment_date')),
-            },
-            "children": children
-        }
-
-        return context
-
-    raise ReportError("Unknown entity type")
+    return common
 
 
-def fetch_monthly_minors(months: int, db_service: DBService):
-    """Prepare context for the monthly minors report template."""
-    data = db_service.get_minors_count_by_month(months)
+def fetch_deceased_report_data(deceased_id: int, db_service: DBService, user):
+    deceased, orphans, _ = db_service.get_deceased_details(deceased_id)
+    if not deceased: return None
+
+    all_currencies = db_service.get_currencies()
+    current_balances = {b.currency_id: float(b.balance) for b in deceased.balances}
+    full_balances_list = [{"currency_name": curr.name, "currency_code": curr.code, "balance": current_balances.get(curr.id, 0.0)} for curr in all_currencies]
+
+    orphans_list = []
+    for o in orphans:
+        primary_link = next((link for link in o.guardian_links if link.is_primary), None)
+        guardian = primary_link.guardian if primary_link else None
+        orphans_list.append({
+            "name": o.name, "national_id": o.national_id or "---",
+            "birth_date": o.date_birth.strftime("%Y/%m/%d") if o.date_birth else "---",
+            "guardian_name": guardian.name if guardian else "غير محدد", 
+            "guardian_nid": guardian.national_id or "---" if guardian else "---",
+            "guardian_start_date": primary_link.start_date.strftime("%Y/%m/%d") if primary_link and primary_link.start_date else "---",
+            "balances": _build_full_balances(o.balances, all_currencies)
+        })
+
     return {
         "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
         "organization": "مؤسسة إدارة وتنمية أموال اليتامى",
-        "months": months,
-        "data": [ {"month": label, "count": cnt} for label, cnt in data ],
+        "exported_by": user.name,
+        "logo_path": logo_path,
+        "ps_logo_path": ps_logo_path,
+        "deceased": {"name": deceased.name, "national_id": deceased.national_id or "---", "death_date": deceased.date_death.strftime("%Y/%m/%d") if deceased.date_death else "---", "account_number": deceased.account_number or "---", "archives_number": deceased.archives_number or "---", "balances": full_balances_list},
+        "orphans": orphans_list,
     }
 
 
-def _render_html(entity_type: str, ctx: dict) -> str:
-    if env is None:
-        raise ReportError("Jinja2 is not installed. Install jinja2 to render templates.")
-    template_name = TEMPLATE_MAP.get(entity_type)
-    if not template_name:
-        raise ReportError("No template configured for entity type")
-    tmpl = env.get_template(template_name)
-    return tmpl.render(**ctx)
+def fetch_guardian_report_data(guardian_id: int, db_service: DBService, user):
+    guardian, orphans_data = db_service.get_guardian_details(guardian_id)
+    if not guardian: return None
+
+    orphans_under_care = []
+    for orphan in orphans_data:
+        link = next((l for l in orphan.guardian_links if l.guardian_id == guardian_id), None)
+        if link:
+            all_currencies = db_service.get_currencies()
+            orphans_under_care.append({
+                "name": orphan.name, "national_id": orphan.national_id or "---",
+                "relation": link.relation if link else "غير محدد",
+                "start_date": link.start_date.strftime("%Y/%m/%d") if link.start_date else "---",
+                "end_date": link.end_date.strftime("%Y/%m/%d") if link.end_date else "مستمر",
+                "balances": _build_full_balances(orphan.balances, all_currencies),
+                "is_primary": 'نعم' if link.is_primary else 'لا',
+            })
+
+    return {
+        "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
+        "organization": "مؤسسة إدارة وتنمية أموال اليتامى",
+        "exported_by": user.name,
+        "logo_path": logo_path,
+        "ps_logo_path": ps_logo_path,
+        "guardian": {"name": guardian.name, "national_id": guardian.national_id or "---", "phone": guardian.phone or "---"},
+        "orphans": orphans_under_care
+    }
 
 
-def generate_report(entity_type: str, entity_id: int, output_path: str = None, as_bytes: bool = False):
-    """Generate PDF report and write to output_path or return bytes if as_bytes=True.
+def fetch_monthly_orphans_report(from_date_str, to_date_str, db_service, current_user):
+    from_date = datetime.strptime(from_date_str, "%Y-%m-%d")
+    to_date = datetime.strptime(to_date_str, "%Y-%m-%d")
+    orphans = db_service.get_orphans_by_date_range(from_date, to_date)
+    all_currencies = db_service.get_currencies()
+    return {
+        "from_date": from_date_str, "to_date": to_date_str,
+        "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
+        "orphans": [{"name": o.name, "national_id": o.national_id or "---", "balances": _build_full_balances(o.balances, all_currencies)} for o in orphans],
+        "total_count": len(orphans),
+        "exported_by": current_user
+    }
 
-    Args:
-        entity_type: 'orphan'|'deceased'|'guardian'
-        entity_id: integer id
-        output_path: path to save PDF. If None and as_bytes True, returns bytes.
-        as_bytes: if True and output_path is None, returns PDF bytes.
-    """
-    db = DBService()
-    # For entity types that require an id we keep existing behaviour
-    if entity_type == "monthly_minors":
-        # here entity_id is treated as months
-        months = int(entity_id)
-        ctx = fetch_monthly_minors(months, db)
-    else:
-        ctx = fetch_entity_data(entity_type, entity_id, db)
 
-    html = _render_html(entity_type, ctx)
-
-    # Attempt to render PDF with available backend. If rendering fails, write the HTML to a temp file
-    # so the user can inspect layout and CSS in a browser.
-    import tempfile
+def generate_monthly_report(from_date_str, to_date_str, output_path, db_service, current_user_name, file_format="pdf"):
     try:
-        if RENDERER == "weasy":
-            html_obj = HTML(string=html)
-            if output_path:
-                html_obj.write_pdf(output_path)
-                return output_path
-            else:
-                return html_obj.write_pdf()
-        elif RENDERER == "pdfkit":
-            config = None
-            try:
-                config = pdfkit.configuration()
-            except Exception:
-                pass
-            if output_path:
-                pdfkit.from_string(html, output_path, configuration=config)
-                return output_path
-            else:
-                return pdfkit.from_string(html, False, configuration=config)
+        start_dt = datetime.strptime(from_date_str, "%Y-%m-%d")
+        end_dt = datetime.strptime(to_date_str, "%Y-%m-%d")
+        orphans = db_service.get_orphans_by_date_range(start_dt, end_dt)
+        if not orphans:
+            raise ValueError("لا توجد سجلات أيتام في هذه الفترة.")
+
+        data_orphans = []
+        all_currencies = db_service.get_currencies()
+        for o in orphans:
+            primary_link = next((link for link in o.guardian_links if link.is_primary), None)
+            guardian_name = primary_link.guardian.name if primary_link else "غير محدد"
+            data_orphans.append({
+                "name": o.name, "national_id": o.national_id or "---",
+                "birth_date": o.date_birth.strftime("%Y/%m/%d") if o.date_birth else "---",
+                "gender": "ذكر" if o.gender.name == "male" else "أنثى",
+                "age": calculate_age(o.date_birth) if o.date_birth else "---",
+                "guardian": guardian_name,
+                "balances": _build_full_balances(o.balances, all_currencies)
+            })
+
+        data = {
+            "from_date": from_date_str, "to_date": to_date_str,
+            "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
+            "orphans": data_orphans, "total_count": len(orphans),
+            "organization": "مؤسسة إدارة وتنمية أموال اليتامى",
+            "exported_by": current_user_name,
+            "logo_path": logo_path,
+            "ps_logo_path": ps_logo_path,
+        }
+
+        if file_format == "pdf":
+            return _export_as_pdf(data, output_path)
         else:
-            raise ReportError("No PDF rendering backend available. Install weasyprint or wkhtmltopdf/pdfkit.")
+            return _export_as_excel(data, output_path)
     except Exception as e:
-        # Save rendered HTML for debugging
-        try:
-            tmp_dir = tempfile.gettempdir()
-            fname = f"report_debug_{entity_type}_{entity_id}.html"
-            tmp_path = os.path.join(tmp_dir, fname)
-            with open(tmp_path, "w", encoding="utf-8") as fh:
-                fh.write(html)
-            raise ReportError(f"فشل إنشاء PDF: {e}. تم حفظ نسخة HTML للتدقيق في: {tmp_path}")
-        except ReportError:
-            raise
-        except Exception as e2:
-            raise ReportError(f"فشل إنشاء PDF ({e}) ولم أتمكن من حفظ ملف HTML للتدقيق ({e2})") from e
-    # """Generate PDF report and write to output_path or return bytes if as_bytes=True.
+        print(f"Error in generation: {e}")
+        raise e
 
-    # Args:
-    #     entity_type: 'orphan'|'deceased'|'guardian'
-    #     entity_id: integer id
-    #     output_path: path to save PDF. If None and as_bytes True, returns bytes.
-    #     as_bytes: if True and output_path is None, returns PDF bytes.
-    # """
-    # db = DBService()
-    # ctx = fetch_entity_data(entity_type, entity_id, db)
-    # html = _render_html(entity_type, ctx)
 
-    # # Attempt to render PDF with available backend. If rendering fails, write the HTML to a temp file
-    # # so the user can inspect layout and CSS in a browser.
-    # import tempfile
-    # try:
-    #     if RENDERER == "weasy":
-    #         html_obj = HTML(string=html)
-    #         if output_path:
-    #             html_obj.write_pdf(output_path)
-    #             return output_path
-    #         else:
-    #             return html_obj.write_pdf()
-    #     elif RENDERER == "pdfkit":
-    #         config = None
-    #         try:
-    #             config = pdfkit.configuration()
-    #         except Exception:
-    #             pass
-    #         if output_path:
-    #             pdfkit.from_string(html, output_path, configuration=config)
-    #             return output_path
-    #         else:
-    #             return pdfkit.from_string(html, False, configuration=config)
-    #     else:
-    #         raise ReportError("No PDF rendering backend available. Install weasyprint or wkhtmltopdf/pdfkit.")
-    # except Exception as e:
-    #     # Save rendered HTML for debugging
-    #     try:
-    #         tmp_dir = tempfile.gettempdir()
-    #         fname = f"report_debug_{entity_type}_{entity_id}.html"
-    #         tmp_path = os.path.join(tmp_dir, fname)
-    #         with open(tmp_path, "w", encoding="utf-8") as fh:
-    #             fh.write(html)
-    #         raise ReportError(f"فشل إنشاء PDF: {e}. تم حفظ نسخة HTML للتدقيق في: {tmp_path}")
-    #     except ReportError:
-    #         raise
-    #     except Exception as e2:
-    #         raise ReportError(f"فشل إنشاء PDF ({e}) ولم أتمكن من حفظ ملف HTML للتدقيق ({e2})") from e
+def _export_as_pdf(data, output_path):
+    template = env.get_template("monthly_report.html")
+    html_content = template.render(**data)
+    HTML(string=html_content).write_pdf(output_path)
+    return True
+
+
+def _export_as_excel(data, output_path):
+    excel_data = []
+    for i, o in enumerate(data['orphans'], 1):
+        bal_text = " / ".join([f"{b['amount']} {b['currency']}" for b in o['balances']])
+        excel_data.append({"م": i, "اسم اليتيم": o['name'], "الجنس": o['gender'], "تاريخ الميلاد": o['birth_date'], "العمر": o['age'], "الوصي الحالي": o['guardian'], "الأرصدة": bal_text})
+    df = pd.DataFrame(excel_data)
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='تقرير دوري')
+        worksheet = writer.sheets['تقرير دوري']
+        for col in worksheet.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                if cell.value: max_length = max(max_length, len(str(cell.value)))
+            worksheet.column_dimensions[column].width = max_length + 5
+    return True
+
+
+def generate_report(entity_type: str, entity_id: int, output_path: str, user):
+    db = DBService()
+    try:
+        if entity_type == "deceased":
+            data = fetch_deceased_report_data(entity_id, db, user)
+            template_name = "deceased_report.html"
+        elif entity_type == "orphan":
+            data = fetch_entity_data("orphan", entity_id, db, user)
+            template_name = "orphan_report.html"
+        elif entity_type == "guardian":
+            data = fetch_guardian_report_data(entity_id, db, user)
+            template_name = "guardian_report.html"
+        else:
+            raise ValueError("نوع التقرير غير مدعوم حالياً")
+
+        if not data:
+            raise Exception("لم يتم العثور على بيانات للسجل المطلوب")
+
+        template = env.get_template(template_name)
+        html_content = template.render(**data)
+        if RENDERER == "weasy":
+            HTML(string=html_content).write_pdf(output_path)
+        else:
+            pdfkit.from_string(html_content, output_path)
+        return output_path
+    finally:
+        db.close()

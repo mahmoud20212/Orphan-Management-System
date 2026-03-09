@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <title>تقرير شهري للأيتام </title>
+    <style>
+        @page {
+            size: A4;
+            margin: 10mm;
+        }
+        body {
+            font-family: 'Arial', 'Cairo', sans-serif;
+            line-height: 1.4;
+            color: #2c3e50;
+            margin: 0;
+            padding: 0;
+        }
+        /* الترويسة العلوية */
+        .header-table {
+            width: 100%;
+            border-bottom: 3px solid #1a2a6c;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+        }
+        .logo {
+            width: 75px;
+            height: auto;
+        }
+        .header-text {
+            text-align: center;
+        }
+        .header-text h1 {
+            margin: 0;
+            font-size: 20px;
+            color: #1a2a6c;
+        }
+        .header-text p {
+            margin: 2px 0;
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+        /* عنوان التقرير وفترة البيانات */
+        .report-title {
+            text-align: center;
+            background: linear-gradient(to left, #1a2a6c, #2c3e50);
+            color: white;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 17px;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        .period-info {
+            background-color: #f8f9fa;
+            border: 1px solid #d1d8e0;
+            padding: 8px;
+            text-align: center;
+            font-size: 13px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+
+        /* جدول البيانات الرئيسي */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 5px;
+        }
+        .data-table th {
+            background-color: #1a2a6c;
+            color: white;
+            border: 1px solid #1a2a6c;
+            padding: 8px;
+            text-align: center;
+            font-size: 12px;
+        }
+        .data-table td {
+            border: 1px solid #dcdde1;
+            padding: 6px 10px;
+            font-size: 12px; /* تصغير الخط قليلاً ليتناسب مع كثرة الأعمدة */
+            white-space: nowrap; /* منع انقسام النص في الخلية الواحدة */
+            text-align: center;
+        }
+        .orphan-name {
+            text-align: right !important;
+            font-weight: bold;
+        }
+        .balance-cell {
+            text-align: left !important;
+            font-family: 'Courier New', Courier, monospace;
+            white-space: nowrap;
+        }
+
+        /* خلاصة الإحصائيات */
+        .summary-section {
+            margin-top: 15px;
+            padding: 8px;
+            border-right: 4px solid #27ae60;
+            background-color: #f1f9f4;
+            font-size: 13px;
+        }
+
+        /* تذييل الصفحة الموزع */
+        .footer-container {
+            margin-top: 40px;
+            border-top: 2px solid #1a2a6c;
+            padding-top: 10px;
+            width: 100%;
+        }
+        .footer-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .footer-table td {
+            border: none !important;
+            text-align: center;
+            vertical-align: top;
+            padding: 5px 0;
+        }
+        .footer-label {
+            font-weight: bold;
+            font-size: 12px;
+            color: #7f8c8d;
+            display: block;
+            margin-bottom: 25px;
+        }
+        .footer-value {
+            font-size: 14px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        .timestamp {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 10px;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+
+    <table class="header-table">
+        <tr>
+            <td width="20%"><img src="{{ logo_path }}" class="logo"></td>
+            <td class="header-text">
+                <h1>{{ organization }}</h1>
+            </td>
+            <td width="20%" style="text-align: left;"><img src="{{ ps_logo_path }}" class="logo"></td>
+        </tr>
+    </table>
+
+    <div class="report-title">تقرير الأيتام المندرجين في النظام</div>
+
+    <div class="period-info">
+        الفترة من تاريخ: <strong>{{ from_date }}</strong> &nbsp;&nbsp; إلى تاريخ: <strong>{{ to_date }}</strong>
+    </div>
+
+    <div class="summary-section">
+        إجمالي عدد المسجلين في هذه الفترة: <strong>{{ total_count }} يتيم</strong>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>م</th>
+                <th>اسم اليتيم</th>
+                <th>رقم الهوية</th>
+                <th>تاريخ الميلاد</th>
+                <th>الجنس</th>
+                <th>العمر</th>
+                <th>الوصي الحالي</th>
+                <th width="35%">الأرصدة الحالية</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for orphan in orphans %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td class="orphan-name">{{ orphan.name }}</td>
+                <td>{{ orphan.national_id }}</td>
+                <td>{{ orphan.gender }}</td>
+                <td>{{ orphan.birth_date }}</td>
+                <td>{{ orphan.age }}</td>
+                <td style="color: #2c3e50;">{{ orphan.guardian }}</td>
+                <td class="balance-cell">
+                    {% for bal in orphan.balances %}
+                        {{ "{:,.2f}".format(bal.amount) }} {{ bal.currency }}<br>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer-container">
+        <table class="footer-table">
+            <tr>
+                <td>
+                    <span class="footer-label">إعداد</span>
+                    <div class="footer-value">{{ exported_by }}</div>
+                </td>
+                <td>
+                    <span class="footer-label">توقيع المدير</span>
+                    <div class="footer-value">...........................</div>
+                </td>
+                <td>
+                    <span class="footer-label">توقيع الموظف</span>
+                    <div class="footer-value">...........................</div>
+                </td>
+            </tr>
+        </table>
+        
+        <div style="text-align: center; margin-top: 30px; font-size: 10px; color: #95a5a6; border-top: 1px solid #eee; padding-top: 5px;">
+            تم استخراج هذا التقرير بتاريخ {{ generated_at }} بواسطة النظام المركزي
+        </div>
+    </div>
+
+</body>
+</html>

@@ -2,7 +2,7 @@
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
-    <title>تقرير لليتيم</title>
+    <title>تقرير للمتوفى</title>
     <style>
         @page {
             size: A4;
@@ -97,10 +97,6 @@
         .ref-box {
             background-color: #f8f9fa;
         }
-        .important-value {
-            color: #e74c3c;
-            font-weight: bold;
-        }
 
         /* الجداول */
         .data-table {
@@ -121,45 +117,31 @@
             padding: 8px 10px;
             font-size: 13px;
         }
-        .highlight-row {
-            background-color: #f1f7ff;
-            font-weight: bold;
-        }
-        .status-badge {
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-        .active { color: #27ae60; border: 1px solid #27ae60; }
-        .expired { color: #95a5a6; border: 1px solid #95a5a6; }
 
+        /* التذييل الموزع */
         .footer-container {
             margin-top: 50px;
             border-top: 2px solid #2c3e50;
             padding-top: 15px;
             width: 100%;
         }
-
         .footer-table {
             width: 100%;
             border-collapse: collapse;
-            table-layout: fixed; /* هذا السطر يضمن توزيع الأعمدة بالتساوي تماماً */
+            table-layout: fixed;
         }
-
         .footer-table td {
             border: none !important;
-            text-align: center; /* توسيط محتوى كل قسم */
+            text-align: center;
             vertical-align: top;
             padding: 10px 0;
         }
-
         .footer-label {
             font-weight: bold;
             font-size: 13px;
             color: #7f8c8d;
             display: block;
-            margin-bottom: 30px; /* مساحة للتوقيع والختم */
+            margin-bottom: 30px;
         }
     </style>
 </head>
@@ -175,28 +157,13 @@
         </tr>
     </table>
 
-    <div class="report-title">بيان الحالة المعلوماتية لليتيم</div>
+    <div class="report-title">بيان السجل الشامل للمتوفى</div>
 
-    <div class="section-header">أولاً: بيانات اليتيم الشخصية</div>
-    <div class="grid-container">
-        <div class="grid-row">
-            <div class="grid-item"><span class="label">اسم اليتيم:</span><div class="value">{{ orphan.name }}</div></div>
-            <div class="grid-item"><span class="label">رقم الهوية:</span><div class="value">{{ orphan.national_id }}</div></div>
-        </div>
-        <div class="grid-row">
-            <div class="grid-item"><span class="label">تاريخ الميلاد:</span><div class="value">{{ orphan.birth_date }}</div></div>
-            <div class="grid-item"><span class="label">الجنس:</span><div class="value">{{ orphan.gender }}</div></div>
-        </div>
-        <div class="grid-row">
-            <div class="grid-item"><span class="label">رقم الجوال:</span><div class="value">{{ orphan.phone }}</div></div>
-        </div>
-    </div>
-
-    <div class="section-header">ثانياً: بيانات المتوفى والمرجع الإداري</div>
+    <div class="section-header">أولاً: بيانات المتوفى</div>
     <div class="grid-container">
         <div class="grid-row">
             <div class="grid-item"><span class="label">اسم المتوفى:</span><div class="value">{{ deceased.name }}</div></div>
-            <div class="grid-item"><span class="label">رقم هوية المتوفى:</span><div class="value">{{ deceased.national_id }}</div></div>
+            <div class="grid-item"><span class="label">رقم الهوية:</span><div class="value">{{ deceased.national_id }}</div></div>
         </div>
         <div class="grid-row">
             <div class="grid-item ref-box"><span class="label">رقم الحساب:</span><div class="value" style="font-family: monospace; font-size: 16px;">{{ deceased.account_number }}</div></div>
@@ -204,72 +171,55 @@
         </div>
         <div class="grid-row">
             <div class="grid-item"><span class="label">تاريخ الوفاة:</span><div class="value">{{ deceased.death_date }}</div></div>
-            <!--<div class="grid-item"><span class="label">جهة الملف:</span><div class="value">الإدارة العامة</div></div>-->
         </div>
     </div>
 
-    <div class="section-header">ثالثاً: بيانات الوصي الشرعي الأساسي</div>
-    {% if primary_guardian %}
+    <div class="section-header">ثانياً: الأرصدة المتاحة لحساب المتوفى</div>
     <div class="grid-container">
-        <div class="grid-row">
-            <div class="grid-item"><span class="label">اسم الوصي:</span><div class="value">{{ primary_guardian.name }}</div></div>
-            <div class="grid-item"><span class="label">رقم هوية الوصي:</span><div class="value important-value">{{ primary_guardian.national_id }}</div></div>
-        </div>
-        <div class="grid-row">
-            <div class="grid-item"><span class="label">صلة القرابة:</span><div class="value">{{ primary_guardian.relation }}</div></div>
-            <div class="grid-item"><span class="label">تاريخ استلام الوصاية:</span><div class="value">{{ primary_guardian.start_date }}</div></div>
-        </div>
+        <table class="data-table" style="margin-bottom: 20px;">
+            <thead>
+                <tr>
+                    <th style="width: 50%;">العملة</th>
+                    <th style="width: 50%; text-align: left;">الرصيد الحالي</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bal in deceased.balances %}
+                <tr>
+                    <td>{{ bal.currency_name }} ({{ bal.currency_code }})</td>
+                    <td style="text-align: left; font-family: monospace; font-weight: bold;">
+                        {{ "{:,.2f}".format(bal.balance) }} {{ bal.currency_code }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
-    {% else %}
-    <div style="padding: 10px; color: #e74c3c; border: 1px solid #e74c3c; text-align: center; border-radius: 5px;">
-        لا يوجد وصي أساسي لهذا الملف
-    </div>
-    {% endif %}
 
-    <div class="section-header">رابعاً: التاريخ الزمني للأوصياء</div>
+    <div class="section-header">ثالثاً: قائمة الأبناء (الأيتام) والوصاية القانونية</div>
     <table class="data-table">
         <thead>
             <tr>
-                <th>اسم الوصي</th>
-                <th>صلة القرابة</th>
-                <th>تاريخ البدء</th>
-                <th>تاريخ الانتهاء</th>
-                <th>الحالة</th>
+                <th>اسم اليتيم</th>
+                <th>رقم الهوية</th>
+                <th>تاريخ الميلاد</th>
+                <th>الوصي الحالي</th>
+                <th>الأرصدة</th>
             </tr>
         </thead>
         <tbody>
-            {% for rec in guardian_history %}
-            <tr class="{{ 'highlight-row' if rec.is_primary else '' }}">
-                <td>{{ rec.name }}</td>
-                <td>{{ rec.relation }}</td>
-                <td>{{ rec.start_date }}</td>
-                <td>{{ rec.end_date }}</td>
-                <td style="text-align: center;">
-                    {% if rec.is_primary %}
-                    <span class="status-badge active">حالي</span>
+            {% for orphan in orphans %}
+            <tr>
+                <td style="font-weight: bold; text-align: right;">{{ orphan.name }}</td>
+                <td>{{ orphan.national_id }}</td>
+                <td>{{ orphan.birth_date }}</td>
+                <td>{{ orphan.guardian_name }}</td>
+                <td style="text-align: left; font-family: monospace; font-size: 11px;">
+                    {% for bal in orphan.balances %}
+                        {{ "{:,.2f}".format(bal.amount) }} {{ bal.currency }}{% if not loop.last %}<br>{% endif %}
                     {% else %}
-                    <span class="status-badge expired">منتهي</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-
-    <div class="section-header">خامساً: الأرصدة المالية الحالية لليتيم</div>
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th width="60%">العملة</th>
-                <th width="40%" style="text-align: left;">المبلغ المتوفر</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for bal in balances %}
-            <tr>
-                <td>{{ bal.currency }}</td>
-                <td style="text-align: left; font-family: monospace; font-size: 15px; font-weight: bold;">
-                    {{ "{:,.2f}".format(bal.amount) }}
+                        0.00
+                    {% endfor %}
                 </td>
             </tr>
             {% endfor %}
@@ -283,12 +233,10 @@
                     <span class="footer-label">إعداد</span>
                     <div class="value" style="font-size: 16px;">{{ exported_by }}</div>
                 </td>
-
                 <td>
                     <span class="footer-label">توقيع المدير</span>
                     <div class="value">...........................</div>
                 </td>
-
                 <td>
                     <span class="footer-label">توقيع الموظف</span>
                     <div class="value">...........................</div>
@@ -297,7 +245,7 @@
         </table>
         
         <div style="text-align: center; margin-top: 30px; font-size: 10px; color: #95a5a6; border-top: 1px solid #eee; padding-top: 5px;">
-            تم استخراج هذا التقرير بتاريخ {{ generated_at }} بواسطة النظام المركزي
+            تم استخراج هذا التقرير العائلي بتاريخ {{ generated_at }} بواسطة النظام المركزي
         </div>
     </div>
 </body>
