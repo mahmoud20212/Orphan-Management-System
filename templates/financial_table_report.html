@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+	<meta charset="UTF-8">
+	<title>تقرير جدول الحركات المالية</title>
+	<style>
+		@page {
+			size: A4 landscape;
+			margin: 10mm;
+		}
+		body {
+			font-family: 'Cairo', 'Arial', sans-serif;
+			color: #1f2937;
+			margin: 0;
+			padding: 0;
+			line-height: 1.4;
+		}
+		.header-table {
+			width: 100%;
+			border-bottom: 3px solid #1a2a6c;
+			margin-bottom: 12px;
+			padding-bottom: 4px;
+		}
+		.logo {
+			width: 150px;
+			height: auto;
+		}
+		.logo2 {
+			width: 110px;
+			height: auto;
+		}
+		.header-text {
+			text-align: center;
+		}
+		.header-text h1 {
+			margin: 0;
+			font-size: 24px;
+			color: #1a2a6c;
+		}
+		.report-title {
+			background: linear-gradient(to left, #1a2a6c, #2f4858);
+			color: #fff;
+			text-align: center;
+			font-size: 16px;
+			font-weight: bold;
+			padding: 10px;
+			border-radius: 4px;
+			margin-bottom: 10px;
+		}
+		.meta-grid {
+			width: 100%;
+			border-collapse: collapse;
+			margin-bottom: 10px;
+		}
+		.meta-grid td {
+			border: 1px solid #d1d5db;
+			padding: 8px;
+			font-size: 12px;
+		}
+		.meta-grid .label {
+			color: #374151;
+			font-weight: bold;
+			margin-left: 5px;
+		}
+		.summary-strip {
+			border-right: 4px solid #1a2a6c;
+			background: #f3f6fb;
+			padding: 8px;
+			margin: 10px 0;
+			font-size: 13px;
+		}
+		.summary-strip span {
+			margin-left: 14px;
+			font-weight: bold;
+		}
+		.table-wrap {
+			width: 100%;
+			overflow-x: auto;
+		}
+		table.data-table {
+			width: max-content;
+			min-width: 100%;
+			border-collapse: collapse;
+			table-layout: auto;
+		}
+		.data-table th {
+			background-color: #1a2a6c;
+			color: #fff;
+			border: 1px solid #1a2a6c;
+			padding: 7px 5px;
+			font-size: 12px;
+			text-align: center;
+			white-space: nowrap;
+		}
+		.data-table td {
+			border: 1px solid #d1d5db;
+			padding: 7px 5px;
+			font-size: 11px;
+			text-align: center;
+			white-space: nowrap;
+		}
+		.date-col {
+			min-width: 95px;
+		}
+		.entity-col {
+			min-width: 88px;
+		}
+		.total-col {
+			min-width: 105px;
+			font-weight: bold;
+			background: #f8fafc;
+		}
+		.note-col {
+			min-width: 220px;
+			text-align: right !important;
+			white-space: normal !important;
+			word-break: break-word;
+		}
+		.empty-state {
+			text-align: center;
+			padding: 16px;
+			color: #6b7280;
+		}
+		.footer-note {
+			text-align: center;
+			margin-top: 14px;
+			font-size: 10px;
+			color: #6b7280;
+			border-top: 1px solid #e5e7eb;
+			padding-top: 6px;
+		}
+
+		@media print {
+			.table-wrap {
+				overflow: visible;
+			}
+			.data-table th,
+			.data-table td {
+				font-size: 9px;
+				padding: 4px 3px;
+			}
+			.date-col {
+				min-width: 75px;
+			}
+			.entity-col {
+				min-width: 60px;
+			}
+			.total-col {
+				min-width: 80px;
+			}
+			.note-col {
+				min-width: 130px;
+			}
+		}
+	</style>
+</head>
+<body>
+	<table class="header-table">
+		<tr>
+			<td style="width: 20%;"><img src="{{ logo_path }}" class="logo"></td>
+			<td class="header-text"><h1>{{ organization }}</h1></td>
+			<td style="width: 20%; text-align: left;"><img src="{{ ps_logo_path }}" class="logo2"></td>
+		</tr>
+	</table>
+
+	<div class="report-title">تقرير جدول الحركات المالية</div>
+
+	<table class="meta-grid">
+		<tr>
+			<td><span class="label">اسم المتوفى:</span> {{ deceased.name }}</td>
+			<td><span class="label">رقم الهوية:</span> {{ deceased.national_id }}</td>
+			<td><span class="label">رقم الأرشيف:</span> {{ deceased.archives_number }}</td>
+			<td><span class="label">العملة:</span> {{ deceased.currency_label }}</td>
+		</tr>
+	</table>
+
+	<div class="summary-strip">
+		<span>إجمالي المودع للمتوفى: {{ deceased.total_deposited }}</span>
+		<span>إجمالي المسحوب للمتوفى: {{ deceased.total_withdrawn }}</span>
+		<span>إجمالي المتاح للمتوفى: {{ deceased.available_balance }}</span>
+	</div>
+
+	<div class="table-wrap">
+		<table class="data-table">
+			<thead>
+				<tr>
+					<th class="date-col">تاريخ الحركة</th>
+					{% for header in entity_headers %}
+					<th class="entity-col">{{ header }}</th>
+					{% endfor %}
+					<th class="total-col">الرصيد الكلي</th>
+					<th class="note-col">ملاحظة</th>
+				</tr>
+			</thead>
+			<tbody>
+				{% if rows and rows|length > 0 %}
+					{% for row in rows %}
+					<tr>
+						<td>{{ row.date }}</td>
+						{% for cell in row.cells %}
+						<td>{{ cell }}</td>
+						{% endfor %}
+						<td class="total-col">{{ row.total_balance }}</td>
+						<td class="note-col">{{ row.note }}</td>
+					</tr>
+					{% endfor %}
+				{% else %}
+					<tr>
+						<td colspan="{{ 4 + (entity_headers|length) }}" class="empty-state">لا توجد حركات متاحة ضمن العملة المحددة.</td>
+					</tr>
+				{% endif %}
+			</tbody>
+		</table>
+	</div>
+
+	<div class="footer-note">
+		تم استخراج هذا التقرير بتاريخ {{ generated_at }} بواسطة {{ exported_by }}
+	</div>
+</body>
+</html>

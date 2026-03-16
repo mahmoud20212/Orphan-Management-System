@@ -846,10 +846,10 @@ QWidget[class~=&quot;bg-gold&quot;] {
    <widget class="QLabel" name="label_2">
     <property name="geometry">
      <rect>
-      <x>290</x>
-      <y>20</y>
-      <width>121</width>
-      <height>111</height>
+      <x>230</x>
+      <y>10</y>
+      <width>131</width>
+      <height>121</height>
      </rect>
     </property>
     <property name="text">
@@ -865,10 +865,10 @@ QWidget[class~=&quot;bg-gold&quot;] {
    <widget class="QLabel" name="label">
     <property name="geometry">
      <rect>
-      <x>410</x>
-      <y>20</y>
-      <width>121</width>
-      <height>111</height>
+      <x>370</x>
+      <y>-20</y>
+      <width>191</width>
+      <height>181</height>
      </rect>
     </property>
     <property name="text">
@@ -898,7 +898,7 @@ QWidget[class~=&quot;bg-gold&quot;] {
      </font>
     </property>
     <property name="text">
-     <string>مؤسسة إدارة وتنمية أموال اليتامى</string>
+     <string>مرحبا بك! سجّل الدخول للمتابعة</string>
     </property>
     <property name="alignment">
      <set>Qt::AlignCenter</set>

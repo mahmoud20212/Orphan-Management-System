@@ -1,11 +1,13 @@
 from decimal import Decimal
 from datetime import datetime, timezone, date, time
+from uuid import uuid4
 import database.db as db_module
 from database.models import ActivityLog, DeceasedBalance, DeceasedTransaction, GuardianBalance, GuardianTransaction, Orphan, Guardian, Deceased, Currency, TransactionTypeEnum, OrphanGuardian, GenderEnum, OrphanBalance, Transaction
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import case, or_, text, func
 
 from utils import parse_and_validate_date
+from utils.helpers import try_get_date
 from utils.notes_generator import generate_transaction_note, generate_deceased_transaction_note, generate_orphan_transaction_note
 from utils.distribution import calculate_beneficiary_distribution
 
@@ -70,7 +72,7 @@ class DBService:
         deceased_arc = self.session.query(Deceased).filter(Deceased.archives_number == term).first()
         return orphan_id, guardian_id, deceased_id, deceased_arc
 
-    def _create_opening_balances(self, db, orphan_id: int, balances: dict, create_transactions: bool = False, note=None):
+    def _create_opening_balances(self, db, orphan_id: int, balances: dict, create_transactions: bool = False, note=None, transaction_details: dict = None):
         if not balances:
             return
         currencies = {c.code: c.id for c in db.query(Currency).all()}
@@ -88,7 +90,29 @@ class DBService:
                 continue
             db.add(OrphanBalance(orphan_id=orphan_id, currency_id=currency_id, balance=amount_dec))
             if create_transactions:
-                db.add(Transaction(orphan_id=orphan_id, currency_id=currency_id, type=TransactionTypeEnum.deposit, amount=amount_dec, created_date=datetime.now(timezone.utc), note=note))
+                details = (transaction_details or {}).get(currency_code, {}) if isinstance(transaction_details, dict) else {}
+                payment_method = (details.get("payment_method") or "").strip() or None
+                if payment_method in ("اختر", "---"):
+                    payment_method = None
+
+                due_date_raw = try_get_date(details.get("due_date"))
+                due_date = parse_and_validate_date(due_date_raw) if due_date_raw else None
+
+                db.add(Transaction(
+                    orphan_id=orphan_id,
+                    currency_id=currency_id,
+                    type=TransactionTypeEnum.deposit,
+                    amount=amount_dec,
+                    created_date=datetime.now(timezone.utc),
+                    note=note,
+                    document_number=(details.get("document_number") or "").strip() or None,
+                    person_name=(details.get("person_name") or "").strip() or None,
+                    payment_method=payment_method,
+                    check_number=(details.get("check_number") or "").strip() or None,
+                    due_date=due_date,
+                    bank_name=(details.get("bank_name") or "").strip() or None,
+                    reference_number=(details.get("reference_number") or "").strip() or None,
+                ))
 
     def add_deceased_and_orphans(self, deceased_data: dict, guardian_data: dict, orphans_data: list, all_currencies_details: dict, selected_mode: str):
         db = self.session
@@ -96,7 +120,7 @@ class DBService:
             # orphans_check = db.query(Orphan).all()
             # if len(orphans_check) > 5:
             #     raise ValueError('لقد تجاوزت الحد المسموح به')
-            
+            row_group_key = f"grp_{uuid4().hex}"
             deceased = Deceased(**deceased_data)
             db.add(deceased)
             db.flush()
@@ -143,7 +167,7 @@ class DBService:
                             'currency': code,
                             'amount': increment
                         })
-                        new_o_trans = Transaction(orphan_id=orphan.id, currency_id=currency.id, amount=increment, type=TransactionTypeEnum.deposit, note=note_text)
+                        new_o_trans = Transaction(orphan_id=orphan.id, currency_id=currency.id, amount=increment, type=TransactionTypeEnum.deposit, note=note_text, row_group_key=row_group_key)
                         orphan_transactions_to_link[code].append(new_o_trans)
                     if bal_obj:
                         bal_obj.balance = new_total
@@ -165,7 +189,7 @@ class DBService:
                         distribution_mode=selected_mode,
                         receipt_details=info
                     )
-                    db.add(DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=amount_input, type=TransactionTypeEnum.deposit, receipt_number=info.get('receipt_number'), payer_name=info.get('payer_name'), payment_method=info.get('payment_method') or "نقداً", check_number=info.get('check_number'), due_date=parse_and_validate_date(info.get('due_date')) if info.get('due_date') else None, bank_name=info.get('bank_name'), reference_number=info.get('reference_number'), note=note_text))
+                    db.add(DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=amount_input, type=TransactionTypeEnum.deposit, receipt_number=info.get('receipt_number'), payer_name=info.get('payer_name'), payment_method=info.get('payment_method') if info.get('payment_method') != 'اختر' else None, check_number=info.get('check_number'), due_date=parse_and_validate_date(info.get('due_date')) if info.get('due_date') else None, bank_name=info.get('bank_name'), reference_number=info.get('reference_number'), note=note_text, row_group_key=row_group_key))
                 if distributed > 0:
                     note_text = generate_deceased_transaction_note(
                         'distribute',
@@ -173,7 +197,7 @@ class DBService:
                         currency.name,
                         distribution_mode=selected_mode
                     )
-                    deceased_withdraw_txn = DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=distributed, type=TransactionTypeEnum.withdraw, payment_method="---", note=note_text)
+                    deceased_withdraw_txn = DeceasedTransaction(deceased_id=deceased.id, currency_id=currency.id, amount=distributed, type=TransactionTypeEnum.withdraw, payment_method=None, note=note_text, row_group_key=row_group_key)
                     db.add(deceased_withdraw_txn)
                     db.flush()
                     for o_trans in orphan_transactions_to_link[code]:

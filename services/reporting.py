@@ -4,9 +4,20 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from decimal import Decimal
 import pandas as pd
+from openpyxl.styles import Alignment, Font, PatternFill
 
 from utils import calculate_age
 from services.db_services import DBService
+from database.models import (
+    Currency,
+    Deceased,
+    DeceasedBalance,
+    DeceasedTransaction,
+    GuardianTransaction,
+    OrphanGuardian,
+    Transaction,
+    TransactionTypeEnum,
+)
 
 # المكتبات المطلوبة لدعم العربية والـ PDF
 try:
@@ -256,6 +267,263 @@ def _export_as_excel(data, output_path):
             for cell in col:
                 if cell.value: max_length = max(max_length, len(str(cell.value)))
             worksheet.column_dimensions[column].width = max_length + 5
+    return True
+
+
+def _format_money(value):
+    try:
+        return f"{Decimal(str(value or 0)):,.2f}"
+    except Exception:
+        return "0.00"
+
+
+def _txn_datetime(txn):
+    return getattr(txn, "created_at", None) or getattr(txn, "created_date", None)
+
+
+def _build_financial_table_report_data(deceased_id: int, currency_id: int, db_service: DBService, exported_by: str):
+    db = db_service.session
+    deceased = db.query(Deceased).filter_by(id=deceased_id).first()
+    if not deceased:
+        raise ValueError("لم يتم العثور على المتوفى المطلوب.")
+
+    if not currency_id:
+        raise ValueError("يرجى اختيار العملة قبل تصدير التقرير.")
+
+    currency = db.query(Currency).filter_by(id=currency_id).first()
+    currency_label = f"{currency.name} ({currency.code})" if currency else str(currency_id)
+
+    orphans = list(deceased.orphans or [])
+    orphan_ids = [o.id for o in orphans]
+
+    primary_guardian = None
+    guardian_relation = ""
+    if orphan_ids:
+        primary_link = db.query(OrphanGuardian).filter(
+            OrphanGuardian.orphan_id.in_(orphan_ids),
+            OrphanGuardian.is_primary == True,
+        ).first()
+        if not primary_link:
+            primary_link = db.query(OrphanGuardian).filter(
+                OrphanGuardian.orphan_id.in_(orphan_ids)
+            ).first()
+        if primary_link:
+            primary_guardian = primary_link.guardian
+            guardian_relation = (primary_link.relation or "").strip()
+
+    entities = []
+    for orphan in orphans:
+        display_name = (orphan.name or "").strip().split()[0] if orphan.name else ""
+        entities.append({
+            "kind": "orphan",
+            "id": orphan.id,
+            "name": orphan.name,
+            "header": display_name or orphan.name or f"يتيم {orphan.id}",
+        })
+
+    if primary_guardian:
+        g_name = (primary_guardian.name or "").strip().split()[0] if primary_guardian.name else ""
+        g_header = g_name or primary_guardian.name or "الوصي الأساسي"
+        if guardian_relation:
+            g_header = f"{g_header} ({guardian_relation})"
+        entities.append({
+            "kind": "guardian",
+            "id": primary_guardian.id,
+            "name": primary_guardian.name,
+            "header": g_header,
+        })
+
+    history_rows = []
+    if orphan_ids:
+        orphan_txns = db.query(Transaction).filter(
+            Transaction.orphan_id.in_(orphan_ids),
+            Transaction.currency_id == currency_id,
+        ).order_by(Transaction.created_at).all()
+        for txn in orphan_txns:
+            history_rows.append({"kind": "orphan", "person_id": txn.orphan_id, "txn": txn})
+
+    if primary_guardian:
+        guardian_txns = db.query(GuardianTransaction).filter(
+            GuardianTransaction.guardian_id == primary_guardian.id,
+            GuardianTransaction.deceased_id == deceased.id,
+            GuardianTransaction.currency_id == currency_id,
+        ).order_by(GuardianTransaction.created_date).all()
+        for txn in guardian_txns:
+            history_rows.append({"kind": "guardian", "person_id": txn.guardian_id, "txn": txn})
+
+    history_rows.sort(key=lambda rec: _txn_datetime(rec["txn"]) or datetime.min)
+
+    grouped = {}
+    for rec in history_rows:
+        txn = rec["txn"]
+        group_key = (getattr(txn, "row_group_key", None) or "").strip()
+        dt = _txn_datetime(txn)
+        if not group_key:
+            if not dt:
+                continue
+            group_key = dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+        grouped.setdefault(group_key, []).append(rec)
+
+    group_items = list(grouped.items())
+    group_items.sort(key=lambda pair: _txn_datetime(pair[1][0]["txn"]) or datetime.min)
+
+    rows = []
+    for _, tx_list in group_items:
+        first_txn = tx_list[0]["txn"]
+        first_dt = _txn_datetime(first_txn)
+        date_text = first_dt.strftime("%d/%m/%Y") if first_dt else "---"
+
+        sums = {}
+        for rec in tx_list:
+            txn = rec["txn"]
+            key = (rec["kind"], rec["person_id"])
+            sums.setdefault(key, {"deposit": Decimal("0"), "withdraw": Decimal("0")})
+            amount = Decimal(str(txn.amount or 0))
+            if txn.type == TransactionTypeEnum.deposit:
+                sums[key]["deposit"] += amount
+            else:
+                sums[key]["withdraw"] += amount
+
+        row_cells = []
+        total_balance = Decimal("0")
+        for entity in entities:
+            key = (entity["kind"], entity["id"])
+            values = sums.get(key, {"deposit": Decimal("0"), "withdraw": Decimal("0")})
+            dep = values["deposit"]
+            wd = values["withdraw"]
+            total_balance += dep - wd
+
+            if dep > 0 and wd > 0:
+                cell_text = f"إيداع {_format_money(dep)} | سحب {_format_money(wd)}"
+            elif dep > 0:
+                cell_text = f"{_format_money(dep)}"
+            elif wd > 0:
+                cell_text = f"-{_format_money(wd)}"
+            else:
+                cell_text = ""
+            row_cells.append(cell_text)
+
+        rows.append({
+            "date": date_text,
+            "cells": row_cells,
+            "total_balance": _format_money(total_balance),
+            "note": str(getattr(first_txn, "note", "") or "").strip(),
+        })
+
+    deceased_deposit = db.query(DeceasedTransaction).filter(
+        DeceasedTransaction.deceased_id == deceased.id,
+        DeceasedTransaction.currency_id == currency_id,
+        DeceasedTransaction.type == TransactionTypeEnum.deposit,
+    ).all()
+    deceased_withdraw = db.query(DeceasedTransaction).filter(
+        DeceasedTransaction.deceased_id == deceased.id,
+        DeceasedTransaction.currency_id == currency_id,
+        DeceasedTransaction.type == TransactionTypeEnum.withdraw,
+    ).all()
+
+    total_deposited = sum(Decimal(str(tx.amount or 0)) for tx in deceased_deposit)
+    total_withdrawn = sum(Decimal(str(tx.amount or 0)) for tx in deceased_withdraw)
+
+    bal = db.query(DeceasedBalance).filter_by(
+        deceased_id=deceased.id,
+        currency_id=currency_id,
+    ).first()
+    available_balance = Decimal(str(bal.balance or 0)) if bal else Decimal("0")
+
+    return {
+        "generated_at": datetime.now().strftime("%Y/%m/%d %H:%M"),
+        "organization": "مؤسسة إدارة وتنمية أموال اليتامى",
+        "exported_by": exported_by,
+        "logo_path": logo_path,
+        "ps_logo_path": ps_logo_path,
+        "deceased": {
+            "id": deceased.id,
+            "name": deceased.name,
+            "national_id": deceased.national_id or "---",
+            "archives_number": deceased.archives_number or "---",
+            "currency_label": currency_label,
+            "total_deposited": _format_money(total_deposited),
+            "total_withdrawn": _format_money(total_withdrawn),
+            "available_balance": _format_money(available_balance),
+        },
+        "entity_headers": [entity["header"] for entity in entities],
+        "rows": rows,
+    }
+
+
+def _export_financial_table_excel(data, output_path):
+    headers = ["تاريخ الحركة", *data.get("entity_headers", []), "الرصيد الكلي", "ملاحظة"]
+
+    records = []
+    for row in data.get("rows", []):
+        records.append([row.get("date", ""), *row.get("cells", []), row.get("total_balance", "0.00"), row.get("note", "")])
+
+    if not records:
+        records = [["---", *("" for _ in data.get("entity_headers", [])), "0.00", ""]]
+
+    df = pd.DataFrame(records, columns=headers)
+    summary_df = pd.DataFrame([
+        ["اسم المتوفى", data["deceased"]["name"]],
+        ["رقم الهوية", data["deceased"]["national_id"]],
+        ["رقم الأرشيف", data["deceased"]["archives_number"]],
+        ["العملة", data["deceased"]["currency_label"]],
+        ["إجمالي المودع", data["deceased"]["total_deposited"]],
+        ["إجمالي المسحوب", data["deceased"]["total_withdrawn"]],
+        ["إجمالي المتاح", data["deceased"]["available_balance"]],
+    ], columns=["البيان", "القيمة"])
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, index=False, sheet_name="الملخص")
+        df.to_excel(writer, index=False, sheet_name="حركات المتوفى")
+
+        summary_ws = writer.sheets["الملخص"]
+        table_ws = writer.sheets["حركات المتوفى"]
+
+        header_fill = PatternFill(start_color="1A2A6C", end_color="1A2A6C", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+
+        for ws in (summary_ws, table_ws):
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            for col in ws.columns:
+                max_len = 0
+                letter = col[0].column_letter
+                for cell in col:
+                    if cell.value is not None:
+                        max_len = max(max_len, len(str(cell.value)))
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                ws.column_dimensions[letter].width = min(max(max_len + 4, 14), 42)
+
+    return True
+
+
+def generate_financial_table_report(
+    deceased_id: int,
+    currency_id: int,
+    output_path: str,
+    db_service: DBService,
+    exported_by: str,
+    file_format: str = "pdf",
+):
+    data = _build_financial_table_report_data(
+        deceased_id=deceased_id,
+        currency_id=currency_id,
+        db_service=db_service,
+        exported_by=exported_by,
+    )
+
+    if str(file_format).lower() == "excel":
+        return _export_financial_table_excel(data, output_path)
+
+    template = env.get_template("financial_table_report.html")
+    html_content = template.render(**data)
+    if RENDERER == "weasy":
+        HTML(string=html_content).write_pdf(output_path)
+    else:
+        pdfkit.from_string(html_content, output_path)
     return True
 
 

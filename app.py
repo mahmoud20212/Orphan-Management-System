@@ -13,7 +13,7 @@ import bcrypt
 import logging
 
 from sqlalchemy import or_, and_, func
-from components.dialogs import AddTTableRowDialog
+from components.dialogs import AddTTableRowDialog, AddDeceasedTransactionDialog
 from database.backup import BackupManager
 from database.models import (
     ActivityLog, DeceasedBalance, DeceasedTransaction, Orphan, Guardian, Deceased, Currency,
@@ -25,9 +25,18 @@ from database.models import (
 from utils import log_activity, parse_and_validate_date, try_get_date, parse_decimal
 from services.db_services import DBService
 from controllers import PersonController, PaginationController
-from components import AddTransactionDialog, DeceasedSearchDialog, ExportReportDialog, GuardianSearchDialog, OrphanSearchDialog
+from components import (
+    AddTransactionDialog,
+    AddTransactionDialogV2,
+    DeceasedSearchDialog,
+    DeceasedSearchDialogV2,
+    ExportFinancialTableDialog,
+    ExportReportDialog,
+    GuardianSearchDialog,
+    OrphanSearchDialog,
+)
 from services.permissions import has_permission
-from services.reporting import generate_report
+from services.reporting import generate_financial_table_report, generate_report
 from utils.distribution import calculate_beneficiary_distribution, to_decimal_money
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -395,6 +404,78 @@ class MainWindow(QMainWindow, FORM_CLASS):
         self.pushButton_3.clicked.connect(self.save_transactions)
         if hasattr(self, "open_table_window"):
             self.open_table_window.clicked.connect(self.open_t_table_fullscreen_editor)
+        if hasattr(self, "t_table_report_btn"):
+            self.t_table_report_btn.clicked.connect(self.export_t_table_report)
+        
+        def _safe_pair(label_name: str, field_name: str):
+            label_widget = getattr(self, label_name, None)
+            field_widget = getattr(self, field_name, None)
+            if label_widget is None or field_widget is None:
+                return None
+            return (label_widget, field_widget)
+
+        def _build_xfields(raw_groups: dict):
+            # تجاهل العناصر غير الموجودة في نسخة الـ UI الحالية.
+            return {
+                group_name: [
+                    pair for pair in (
+                        _safe_pair(label_name, field_name)
+                        for label_name, field_name in pairs
+                    )
+                    if pair is not None
+                ]
+                for group_name, pairs in raw_groups.items()
+            }
+
+        transaction_groups_by_combo = {
+            "comboBox_5": {
+                "general": [("label_206", "lineEdit_44"), ("label_207", "lineEdit_45")],
+                "transfer": [("label_215", "lineEdit_49"), ("label_213", "lineEdit_48")],
+                "shik": [
+                    ("label_208", "lineEdit_46"),
+                    ("label_214", "lineEdit_47"),
+                    ("label_213", "lineEdit_48"),
+                ],
+            },
+            "comboBox_6": {
+                "general": [("label_216", "lineEdit_50"), ("label_221", "lineEdit_55")],
+                "transfer": [("label_220", "lineEdit_54"), ("label_218", "lineEdit_53")],
+                "shik": [
+                    ("label_217", "lineEdit_51"),
+                    ("label_219", "lineEdit_52"),
+                    ("label_218", "lineEdit_53"),
+                ],
+            },
+            "comboBox_7": {
+                "general": [("label_222", "lineEdit_57"), ("label_227", "lineEdit_62")],
+                "transfer": [("label_226", "lineEdit_61"), ("label_224", "lineEdit_60")],
+                "shik": [
+                    ("label_223", "lineEdit_58"),
+                    ("label_225", "lineEdit_59"),
+                    ("label_224", "lineEdit_60"),
+                ],
+            },
+            "comboBox_8": {
+                "general": [("label_228", "lineEdit_64"), ("label_233", "lineEdit_69")],
+                "transfer": [("label_232", "lineEdit_68"), ("label_230", "lineEdit_67")],
+                "shik": [
+                    ("label_229", "lineEdit_65"),
+                    ("label_231", "lineEdit_66"),
+                    ("label_230", "lineEdit_67"),
+                ],
+            },
+        }
+
+        for combo_name, raw_groups in transaction_groups_by_combo.items():
+            combo_widget = getattr(self, combo_name, None)
+            if combo_widget is None:
+                continue
+
+            xfields = _build_xfields(raw_groups)
+            combo_widget.currentIndexChanged.connect(
+                lambda _=None, cb=combo_widget, groups=xfields: self.toggle_transactions_inputs(cb, groups)
+            )
+            self.toggle_transactions_inputs(combo_widget, xfields)
     
     def open_deceased_selection_dialog(self):
         # جلب النص من حقل البحث (اسم، هوية، أو أرشيف 10866)
@@ -686,10 +767,18 @@ class MainWindow(QMainWindow, FORM_CLASS):
                                 w_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                                 self.t_table.setItem(row, base + 1, w_item)
 
-                    # تجميع الملاحظات من كل المعاملات في هذا الصف
-                    # notes = [txn.note for txn in tx_list if txn.note]
-                    # combined_notes = " | ".join(notes) if notes else ""
-                    notes_item = QTableWidgetItem(self._sanitize_user_visible_note(first_txn.note))
+                    # إذا كانت كل الملاحظات متطابقة نعرض واحدة فقط، وإلا نجمع الملاحظات المختلفة.
+                    notes = []
+                    for rec in tx_list:
+                        txn_obj = rec.get("txn")
+                        note_text = self._sanitize_user_visible_note(getattr(txn_obj, "note", ""))
+                        if note_text:
+                            notes.append(note_text)
+
+                    unique_notes = list(dict.fromkeys(notes))
+                    combined_notes = unique_notes[0] if len(unique_notes) == 1 else " | ".join(unique_notes)
+
+                    notes_item = QTableWidgetItem(combined_notes)
                     notes_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.t_table.setItem(row, note_col, notes_item)
 
@@ -748,15 +837,12 @@ class MainWindow(QMainWindow, FORM_CLASS):
                         )
                         self._set_t_table_row_entity_editable(row, editable=False)
                     else:
-                        preserved = previous_action_by_row_key.get(key)
-                        preserved_payload = preserved.get("payload") if preserved else None
-                        if isinstance(preserved_payload, dict) and preserved_payload.get("status") == "saved":
-                            action_item = self._create_t_table_deceased_action_item(
-                                preserved.get("text") or "إضافة تفاصيل",
-                                preserved_payload,
-                            )
-                        else:
-                            action_item = self._create_t_table_deceased_action_item()
+                        action_item = self._create_t_table_deceased_action_item(
+                            "غير متاح",
+                            {
+                                "status": "locked_no_deceased",
+                            },
+                        )
                         self._set_t_table_row_entity_editable(row, editable=True)
                     self.t_table.setItem(row, action_col, action_item)
                     self.t_table.setItem(row, delete_col, self._create_t_table_delete_item())
@@ -779,6 +865,7 @@ class MainWindow(QMainWindow, FORM_CLASS):
                     w_item.setBackground(QColor("#e0e0e0"))  # light gray background
                     w_item.setForeground(QColor("black"))
                     w_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    w_item.setFlags(w_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.t_table.setItem(r, total_col, w_item)
 
             # تحديث حالة الأزرار (سيكون الجدول فارغاً في البداية)
@@ -814,6 +901,13 @@ class MainWindow(QMainWindow, FORM_CLASS):
     def on_t_table_cell_changed(self, item):
         """حساب الرصيد الكلي عند تغيير قيمة الإيداع أو السحب"""
         if not item:
+            return
+        if item.row() < 2:
+            return
+
+        total_col, _, _, _, entity_start_col = self._get_financial_table_special_columns(self.t_table)
+        # لا تعيد الحساب إلا عند تعديل أعمدة الإيداع/السحب فقط.
+        if item.column() < entity_start_col or item.column() >= total_col:
             return
         self.recalculate_financial_row_balance(self.t_table, item.row())
 
@@ -994,6 +1088,25 @@ class MainWindow(QMainWindow, FORM_CLASS):
                     pass
         return total_balance
 
+    def _t_table_row_has_entered_entity_data(self, row: int) -> bool:
+        """Return True if any orphan/guardian deposit/withdraw cell has a non-zero value."""
+        if row < 2:
+            return False
+
+        total_col, _, _, _, entity_start_col = self._get_financial_table_special_columns(self.t_table)
+        for col_idx in range(entity_start_col, total_col):
+            item = self.t_table.item(row, col_idx)
+            cell_text = item.text().strip() if item else ""
+            if not cell_text:
+                continue
+            try:
+                if Decimal(cell_text.replace(',', '')) != Decimal('0'):
+                    return True
+            except Exception:
+                # Treat any non-empty unparsable text as entered data to stay on the safe side.
+                return True
+        return False
+
     def _get_t_table_entity_column_map(self):
         """Return map: (kind, id) -> base column (deposit col) for t_table entities."""
         mapping = {}
@@ -1154,13 +1267,46 @@ class MainWindow(QMainWindow, FORM_CLASS):
             selected_currency = self.db_service.session.query(Currency).get(selected_currency_id)
             selected_currency_code = selected_currency.code if selected_currency and selected_currency.code else None
         if not selected_currency_code:
-            QMessageBox.warning(self, "تنبيه", "يرجى اختيار العملة من الحقل C_Combo أولاً.")
+            QMessageBox.warning(self, "تنبيه", "يرجى اختيار العملة من الحقل أولاً.")
             return
 
         action_item = self.t_table.item(row, action_col)
         action_payload = action_item.data(Qt.ItemDataRole.UserRole) if action_item else None
         original_action_text = action_item.text() if action_item else ""
         original_action_payload = action_payload
+
+        id_item = self.t_table.item(row, 0)
+        row_is_saved = bool(id_item and str(id_item.text() or "").strip())
+        row_has_key = bool(id_item and id_item.data(Qt.ItemDataRole.UserRole))
+        if row_is_saved and row_has_key:
+            payload_status = action_payload.get("status") if isinstance(action_payload, dict) else None
+            if payload_status not in ("saved", "pending", "locked_no_deceased"):
+                QMessageBox.warning(
+                    self,
+                    "تنبيه",
+                    "لا يمكن تعديل تفاصيل المتوفى لهذا الصف لأنه تم حفظه بدون تفاصيل متوفى.",
+                )
+                return
+
+        if isinstance(action_payload, dict) and action_payload.get("status") == "locked_no_deceased":
+            QMessageBox.warning(
+                self,
+                "تنبيه",
+                "لا يمكن تعديل تفاصيل المتوفى لهذا الصف لأنه تم حفظه بدون تفاصيل متوفى.",
+            )
+            return
+
+        if (
+            isinstance(action_payload, dict)
+            and action_payload.get("status") == "saved"
+            and not self._t_table_row_has_entered_entity_data(row)
+        ):
+            QMessageBox.warning(
+                self,
+                "تنبيه",
+                "لا يمكن تعديل تفاصيل المتوفى لهذا الصف بعد الحفظ لأنه لا يحتوي على بيانات مدخلة.",
+            )
+            return
 
         existing_txn_id = None
         distribution_anchor_txn_id = None
@@ -1573,12 +1719,14 @@ class MainWindow(QMainWindow, FORM_CLASS):
         try:
             total_balance = self._calculate_financial_row_total(table, row)
 
-            balance_cell = table.item(row, total_col)
-            if not balance_cell:
-                balance_cell = QTableWidgetItem()
+            # منع إطلاق itemChanged أثناء تحديث خلية الرصيد لتفادي الاستدعاء الذاتي.
+            with QSignalBlocker(table):
+                balance_cell = table.item(row, total_col)
+                if not balance_cell:
+                    balance_cell = QTableWidgetItem()
+                    table.setItem(row, total_col, balance_cell)
                 balance_cell.setFlags(balance_cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                table.setItem(row, total_col, balance_cell)
-            balance_cell.setText(f"{total_balance:,.2f}")
+                balance_cell.setText(f"{total_balance:,.2f}")
             self._refresh_financial_entity_header_balances(table)
         except Exception as e:
             print(f"خطأ في حساب الرصيد: {e}")
@@ -2203,7 +2351,19 @@ class MainWindow(QMainWindow, FORM_CLASS):
     def _build_direct_save_payload_from_t_table_dialog(self, row_data):
         """Map AddTTableRowDialog output to the same structure expected by save_transactions."""
         currency_id = self.c_combo.currentData()
+        selected_currency_name = (row_data.get("currency") or "").strip()
+        if selected_currency_name:
+            try:
+                c_obj = self.db_service.session.query(Currency).filter(Currency.name == selected_currency_name).first()
+                if c_obj:
+                    currency_id = c_obj.id
+            except Exception:
+                pass
         deceased_id = self.current_deceased_for_t_table.id if self.current_deceased_for_t_table else None
+        if deceased_id is None and getattr(self.controller, "current_type", None) == PersonType.DECEASED:
+            current_person = getattr(self.controller, "current_person", None)
+            if current_person is not None:
+                deceased_id = current_person.id
 
         has_deceased_action = bool(row_data.get("type")) and Decimal(str(row_data.get("amount") or 0)) > 0
         deceased_action_payload = None
@@ -2743,6 +2903,7 @@ class MainWindow(QMainWindow, FORM_CLASS):
                 return new_txn.id, new_txn.id, False
 
             pending_row_updates = []
+            locked_no_deceased_row_updates = []
 
             def reverse_existing_txn(kind, txn):
                 amount = Decimal(str(txn.amount or 0))
@@ -2906,6 +3067,21 @@ class MainWindow(QMainWindow, FORM_CLASS):
                         total += dep
 
                 return total
+
+            def row_has_entity_movements(row_item):
+                for orphan_tx in row_item.get("orphans_transactions", []) or []:
+                    dep = Decimal(str(orphan_tx.get("deposit", Decimal('0')) or 0))
+                    wd = Decimal(str(orphan_tx.get("withdraw", Decimal('0')) or 0))
+                    if dep > 0 or wd > 0:
+                        return True
+
+                for guardian_tx in row_item.get("guardian_transactions", []) or []:
+                    dep = Decimal(str(guardian_tx.get("deposit", Decimal('0')) or 0))
+                    wd = Decimal(str(guardian_tx.get("withdraw", Decimal('0')) or 0))
+                    if dep > 0 or wd > 0:
+                        return True
+
+                return False
 
             def is_manual_distribution_mode(mode_value):
                 normalized = str(mode_value or "").strip()
@@ -3402,6 +3578,11 @@ class MainWindow(QMainWindow, FORM_CLASS):
                         is_update,
                         manual_linked_flag,
                     ))
+                elif (
+                    not isinstance(item.get("deceased_action"), dict)
+                    and row_has_entity_movements(item)
+                ):
+                    locked_no_deceased_row_updates.append(item.get("_table_row", 0) - 1)
 
                 if not skip_manual_entity_transactions and self.current_deceased_for_t_table and should_link_manual_distribution:
                     manual_dist_deceased_id = get_row_deceased_id_for_manual_distribution(deceased_action_payload)
@@ -3433,6 +3614,18 @@ class MainWindow(QMainWindow, FORM_CLASS):
                     "txn_id": display_txn_id,
                     "distribution_anchor_txn_id": anchor_txn_id,
                     "manual_linked": manual_linked_flag,
+                })
+
+            for row_idx in locked_no_deceased_row_updates:
+                if row_idx < 2 or row_idx >= self.t_table.rowCount():
+                    continue
+                _, _, action_col, _, _ = self._get_financial_table_special_columns(self.t_table)
+                item_widget = self.t_table.item(row_idx, action_col)
+                if not item_widget:
+                    continue
+                item_widget.setText("غير متاح")
+                item_widget.setData(Qt.ItemDataRole.UserRole, {
+                    "status": "locked_no_deceased",
                 })
         except ValueError as ve:
             db.rollback()
@@ -3668,6 +3861,8 @@ class MainWindow(QMainWindow, FORM_CLASS):
         can_view_reports = has_permission(self.current_user, 'Reports', PermissionEnum.create)
         self.detail_export_btn.setEnabled(can_view_reports)
         self.orphans_monthly_report.setEnabled(can_view_reports)
+        if hasattr(self, "t_table_report_btn"):
+            self.t_table_report_btn.setEnabled(can_view_reports)
         
         self.detail_save_btn.setEnabled(has_permission(self.current_user, 'PersonDetail', PermissionEnum.update))
         self.detail_delete_btn.setEnabled(has_permission(self.current_user, 'PersonDetail', PermissionEnum.delete))
@@ -3994,7 +4189,7 @@ class MainWindow(QMainWindow, FORM_CLASS):
             self.set_sellected_list_item(self.listWidget, 1)
 
     def search_deceased_by_id_or_name(self):
-        self.execute_person_search(DeceasedSearchDialog, {
+        self.execute_person_search(DeceasedSearchDialogV2, {
             'id': self.lineEdit_38,
             'name': self.add_deceased_name_2,
             'national_id': self.add_deceased_id_2,
@@ -4004,7 +4199,7 @@ class MainWindow(QMainWindow, FORM_CLASS):
         })
 
     def search_deceased_by_id_or_name_2(self):
-        self.execute_person_search(DeceasedSearchDialog, {
+        self.execute_person_search(DeceasedSearchDialogV2, {
             'id': self.lineEdit_40,
             'name': self.detail_deceased_name,
             'national_id': self.detail_deceased_id,
@@ -4732,17 +4927,17 @@ class MainWindow(QMainWindow, FORM_CLASS):
                 id_item = table_widget.item(row, 0)
                 t_id = int(id_item.text()) if id_item and id_item.text().isdigit() else None
 
-                currency_text = self._get_widget_or_text(table_widget, row, 1)
+                date_text = self._get_widget_or_text(table_widget, row, 1)
                 type_text = self._get_widget_or_text(table_widget, row, 2)
-                amount_text = self._get_widget_or_text(table_widget, row, 3)
-                payment_method_text = self._get_widget_or_text(table_widget, row, 4)
-                receipt_number_text = self._get_widget_or_text(table_widget, row, 5)
-                payer_name_text = self._get_widget_or_text(table_widget, row, 6)
-                bank_name_text = self._get_widget_or_text(table_widget, row, 7)
-                check_number_text = self._get_widget_or_text(table_widget, row, 8)
-                due_date_text = self._get_widget_or_text(table_widget, row, 9)
-                reference_number_text = self._get_widget_or_text(table_widget, row, 10)
-                date_text = self._get_widget_or_text(table_widget, row, 11)
+                currency_text = self._get_widget_or_text(table_widget, row, 3)
+                amount_text = self._get_widget_or_text(table_widget, row, 4)
+                payment_method_text = self._get_widget_or_text(table_widget, row, 5)
+                receipt_number_text = self._get_widget_or_text(table_widget, row, 6)
+                payer_name_text = self._get_widget_or_text(table_widget, row, 7)
+                bank_name_text = self._get_widget_or_text(table_widget, row, 8)
+                check_number_text = self._get_widget_or_text(table_widget, row, 9)
+                due_date_text = self._get_widget_or_text(table_widget, row, 10)
+                reference_number_text = self._get_widget_or_text(table_widget, row, 11)
                 note_text = self._get_widget_or_text(table_widget, row, 12)
 
                 is_empty_row = not any([
@@ -5203,40 +5398,23 @@ class MainWindow(QMainWindow, FORM_CLASS):
             return False
     
     def open_add_transaction_dialog(self):
-        if not self.controller.current_person:
+        d = self.controller.current_person
+        if not d:
             return
 
-        selected_currency_id = self.c_combo.currentData()
-        selected_currency_code = None
-        if selected_currency_id:
-            selected_currency = self.db_service.session.query(Currency).get(selected_currency_id)
-            selected_currency_code = selected_currency.code if selected_currency and selected_currency.code else None
-        if not selected_currency_code:
-            QMessageBox.warning(self, "تنبيه", "يرجى اختيار العملة من الحقل C_Combo أولاً.")
+        if getattr(self.controller, "current_type", None) == PersonType.DECEASED:
+            self.current_deceased_for_t_table = d
+
+        dialog = AddDeceasedTransactionDialog(parent=self, deceased=d, db_service=self.db_service)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        
-        person_id = self.controller.current_person.id
-        dialog = AddTransactionDialog(
-            deceased_id=person_id,
-            db_service=self.db_service,
-            forced_currency_code=selected_currency_code,
-            hide_currency_field=True,
-            hide_date_field=True,
-        )
-        
-        if dialog.exec() == QDialog.DialogCode.Accepted: 
-            new_data = dialog.get_transaction_data()
-            
-            if self.db_service.add_single_deceased_transaction(new_data):
-                # بعد الحفظ بنجاح، نقوم بجلب بيانات الشخص مجدداً من الجلسة المفتوحة
-                # هذا السطر سيجعل load_card و load_deceased_transaction_tab تعمل بسلام
-                self.controller.current_person = self.db_service.session.query(Deceased).get(person_id)
-                
-                self.load_deceased_transaction_tab() 
-                self.load_card(self.controller.current_person, PersonType.DECEASED)
-                
-                log_activity(self.db_service.session, self.current_user.id, ActionTypes.CREATE, ResourceTypes.DECEASED_TRANSACTION, resource_id=self.controller.current_person.id, description=f"أضيفت حركة جديدة للمتوفى '{self.controller.current_person.name}'")
-                QMessageBox.information(self, "نجاح", "تمت إضافة الحركة وتحديث الرصيد بنجاح")
+
+        row_data = dialog.get_data() or {}
+        self.save_t_table_dialog_row_directly(row_data)
+
+        if self.controller.current_type == PersonType.DECEASED and self.controller.current_person:
+            self.load_deceased_transaction_tab()
+            self.load_card(self.controller.current_person, PersonType.DECEASED)
 
     def add_single_deceased_transaction(self, data):
         db = self.session
@@ -5532,35 +5710,36 @@ class MainWindow(QMainWindow, FORM_CLASS):
         for row_idx, t in enumerate(transactions):
             # ===== ID =====
             table.setItem(row_idx, 0, self._create_readonly_item(str(t.id)))
-
-            combo_currency = QComboBox()
-            combo_currency.addItems(["اختر"] + [c.name for c in db.query(Currency).all()])
-            if t.currency:
-                idx = combo_currency.findText(t.currency.name)
-                combo_currency.setCurrentIndex(idx if idx != -1 else 0)
-            table.setCellWidget(row_idx, 1, combo_currency)
+            table.setItem(row_idx, 1, QTableWidgetItem(t.created_date.strftime("%d/%m/%Y") if t.created_date else "---"))
 
             combo_type = QComboBox()
             combo_type.addItems(["اختر", "إيداع", "سحب"])
             combo_type.setCurrentText("إيداع" if t.type == TransactionTypeEnum.deposit else "سحب")
             table.setCellWidget(row_idx, 2, combo_type)
 
+            combo_currency = QComboBox()
+            combo_currency.addItems(["اختر"] + [c.name for c in db.query(Currency).all()])
+            if t.currency:
+                idx = combo_currency.findText(t.currency.name)
+                combo_currency.setCurrentIndex(idx if idx != -1 else 0)
+            table.setCellWidget(row_idx, 3, combo_currency)
+
+            # ===== Amount =====
+            table.setItem(row_idx, 4, QTableWidgetItem(f"{t.amount:,.2f}" or '---'))
+
             combo_payment_method = QComboBox()
             combo_payment_method.addItems(["اختر", "نقداً", "شيك", "تحويل بنكي"])
             if t.payment_method:
                 pm_idx = combo_payment_method.findText(t.payment_method)
                 combo_payment_method.setCurrentIndex(pm_idx if pm_idx != -1 else 0)
-            table.setCellWidget(row_idx, 4, combo_payment_method)
+            table.setCellWidget(row_idx, 5, combo_payment_method)
 
-            # ===== Amount =====
-            table.setItem(row_idx, 3, QTableWidgetItem(f"{t.amount:,.2f}" or '---'))
-            table.setItem(row_idx, 5, QTableWidgetItem(t.receipt_number or ""))
-            table.setItem(row_idx, 6, QTableWidgetItem(t.payer_name or ""))
-            table.setItem(row_idx, 7, QTableWidgetItem(t.bank_name or ""))
-            table.setItem(row_idx, 8, QTableWidgetItem(t.check_number or ""))
-            table.setItem(row_idx, 9, QTableWidgetItem(t.due_date.strftime("%d/%m/%Y") if t.due_date else ""))
-            table.setItem(row_idx, 10, QTableWidgetItem(t.reference_number or ""))
-            table.setItem(row_idx, 11, QTableWidgetItem(t.created_date.strftime("%d/%m/%Y") if t.created_date else "---"))
+            table.setItem(row_idx, 6, QTableWidgetItem(t.receipt_number or ""))
+            table.setItem(row_idx, 7, QTableWidgetItem(t.payer_name or ""))
+            table.setItem(row_idx, 8, QTableWidgetItem(t.bank_name or ""))
+            table.setItem(row_idx, 9, QTableWidgetItem(t.check_number or ""))
+            table.setItem(row_idx, 10, QTableWidgetItem(t.due_date.strftime("%d/%m/%Y") if t.due_date else ""))
+            table.setItem(row_idx, 11, QTableWidgetItem(t.reference_number or ""))
             table.setItem(row_idx, 12, QTableWidgetItem(t.note or ''))
 
     def load_deceased_orphans_tab(self):
@@ -5649,9 +5828,9 @@ class MainWindow(QMainWindow, FORM_CLASS):
 
         table.setColumnCount(13)
         table.setHorizontalHeaderLabels([
-            "ID", "تاريخ الحركة", "نوع الحركة", "العملة", "المبلغ", "ملاحظة",
+            "ID", "تاريخ الحركة", "نوع الحركة", "العملة", "المبلغ",
             "طريقة الدفع", "رقم سند القبض/الصرف", "المودع/المستفيد", "رقم الشيك",
-            "تاريخ الاستحقاق", "اسم البنك", "رقم المرجع/الحوالة",
+            "تاريخ الاستحقاق", "اسم البنك", "رقم المرجع/الحوالة", "ملاحظة",
         ])
         table.setColumnHidden(0, True)
 
@@ -5683,14 +5862,14 @@ class MainWindow(QMainWindow, FORM_CLASS):
             table.setCellWidget(row_idx, 3, currency_combo)
 
             table.setItem(row_idx, 4, QTableWidgetItem(f"{t.amount:,.2f}"))
-            table.setItem(row_idx, 5, QTableWidgetItem(t.note or ""))
-            table.setItem(row_idx, 6, QTableWidgetItem(t.payment_method or ""))
-            table.setItem(row_idx, 7, QTableWidgetItem(t.document_number or ""))
-            table.setItem(row_idx, 8, QTableWidgetItem(t.person_name or ""))
-            table.setItem(row_idx, 9, QTableWidgetItem(t.check_number or ""))
-            table.setItem(row_idx, 10, QTableWidgetItem(t.due_date.strftime("%d/%m/%Y") if t.due_date else ""))
-            table.setItem(row_idx, 11, QTableWidgetItem(t.bank_name or ""))
-            table.setItem(row_idx, 12, QTableWidgetItem(t.reference_number or ""))
+            table.setItem(row_idx, 5, QTableWidgetItem(t.payment_method or ""))
+            table.setItem(row_idx, 6, QTableWidgetItem(t.document_number or ""))
+            table.setItem(row_idx, 7, QTableWidgetItem(t.person_name or ""))
+            table.setItem(row_idx, 8, QTableWidgetItem(t.check_number or ""))
+            table.setItem(row_idx, 9, QTableWidgetItem(t.due_date.strftime("%d/%m/%Y") if t.due_date else ""))
+            table.setItem(row_idx, 10, QTableWidgetItem(t.bank_name or ""))
+            table.setItem(row_idx, 11, QTableWidgetItem(t.reference_number or ""))
+            table.setItem(row_idx, 12, QTableWidgetItem(t.note or ""))
 
     def load_guardian_orphans_tab(self):
         """تحميل جدول الأيتام مع كافة التفاصيل: الأرصدة، التواريخ، وصلة القرابة، وحالة الوصاية"""
@@ -6156,6 +6335,21 @@ class MainWindow(QMainWindow, FORM_CLASS):
             self.add_orphan_dinar.clear()
             self.add_orphan_euro.clear()
 
+            # Opening transaction details by currency (ILS/USD/JOD/EUR)
+            for combo_name in ("comboBox_5", "comboBox_6", "comboBox_7", "comboBox_8"):
+                combo = getattr(self, combo_name, None)
+                if combo is not None:
+                    combo.setCurrentIndex(0)
+            for field_name in (
+                "lineEdit_44", "lineEdit_45", "lineEdit_46", "lineEdit_47", "lineEdit_48", "lineEdit_49",
+                "lineEdit_50", "lineEdit_51", "lineEdit_52", "lineEdit_53", "lineEdit_54", "lineEdit_55",
+                "lineEdit_57", "lineEdit_58", "lineEdit_59", "lineEdit_60", "lineEdit_61", "lineEdit_62",
+                "lineEdit_64", "lineEdit_65", "lineEdit_66", "lineEdit_67", "lineEdit_68", "lineEdit_69",
+            ):
+                field = getattr(self, field_name, None)
+                if field is not None:
+                    field.clear()
+
             # Deceased fields (second panel)
             self.add_deceased_name_2.clear()
             self.add_deceased_id_2.clear()
@@ -6172,6 +6366,7 @@ class MainWindow(QMainWindow, FORM_CLASS):
             
             self.lineEdit_38.clear()
             self.lineEdit_39.clear()
+            self.trans_note_input.clear()
         except Exception as e:
             QMessageBox.warning(self, "تحذير", f"حدث خطأ أثناء تفريغ الحقول: {e}")
 
@@ -6203,11 +6398,80 @@ class MainWindow(QMainWindow, FORM_CLASS):
             guardian_kinship = self.add_guardian_kinship_2.text().strip()
             guardian_start_date = try_get_date(self.add_guardian_start_date_2.text().strip())
 
-            ils = parse_decimal(self.add_orphan_shekel.text(), 'شيكل')
-            usd = parse_decimal(self.add_orphan_dollar.text(), 'دولار')
-            jod = parse_decimal(self.add_orphan_dinar.text(), 'دينار')
-            eur = parse_decimal(self.add_orphan_euro.text(), 'يورو')
             note = self.trans_note_input.text().strip() or None
+
+            opening_currency_fields = {
+                "ILS": {
+                    "amount_widget": self.add_orphan_shekel,
+                    "amount_label": "شيكل",
+                    "payment_method": getattr(self, "comboBox_5", None),
+                    "document_number": getattr(self, "lineEdit_44", None),
+                    "person_name": getattr(self, "lineEdit_45", None),
+                    "check_number": getattr(self, "lineEdit_46", None),
+                    "due_date": getattr(self, "lineEdit_47", None),
+                    "bank_name": getattr(self, "lineEdit_48", None),
+                    "reference_number": getattr(self, "lineEdit_49", None),
+                },
+                "USD": {
+                    "amount_widget": self.add_orphan_dollar,
+                    "amount_label": "دولار",
+                    "payment_method": getattr(self, "comboBox_6", None),
+                    "document_number": getattr(self, "lineEdit_50", None),
+                    "person_name": getattr(self, "lineEdit_55", None),
+                    "check_number": getattr(self, "lineEdit_51", None),
+                    "due_date": getattr(self, "lineEdit_52", None),
+                    "bank_name": getattr(self, "lineEdit_53", None),
+                    "reference_number": getattr(self, "lineEdit_54", None),
+                },
+                "JOD": {
+                    "amount_widget": self.add_orphan_dinar,
+                    "amount_label": "دينار",
+                    "payment_method": getattr(self, "comboBox_7", None),
+                    "document_number": getattr(self, "lineEdit_57", None),
+                    "person_name": getattr(self, "lineEdit_62", None),
+                    "check_number": getattr(self, "lineEdit_58", None),
+                    "due_date": getattr(self, "lineEdit_59", None),
+                    "bank_name": getattr(self, "lineEdit_60", None),
+                    "reference_number": getattr(self, "lineEdit_61", None),
+                },
+                "EUR": {
+                    "amount_widget": self.add_orphan_euro,
+                    "amount_label": "يورو",
+                    "payment_method": getattr(self, "comboBox_8", None),
+                    "document_number": getattr(self, "lineEdit_64", None),
+                    "person_name": getattr(self, "lineEdit_69", None),
+                    "check_number": getattr(self, "lineEdit_65", None),
+                    "due_date": getattr(self, "lineEdit_66", None),
+                    "bank_name": getattr(self, "lineEdit_67", None),
+                    "reference_number": getattr(self, "lineEdit_68", None),
+                },
+            }
+
+            opening_balances = {}
+            opening_txn_details = {}
+            for code, config in opening_currency_fields.items():
+                opening_balances[code] = parse_decimal(
+                    config["amount_widget"].text(),
+                    config["amount_label"],
+                )
+                payment_method_widget = config.get("payment_method")
+                payment_method_text = (
+                    payment_method_widget.currentText().strip()
+                    if payment_method_widget is not None
+                    else ""
+                )
+                if payment_method_text in ("", "اختر", "---"):
+                    payment_method_text = None
+
+                opening_txn_details[code] = {
+                    "document_number": (config["document_number"].text().strip() if config.get("document_number") else "") or None,
+                    "person_name": (config["person_name"].text().strip() if config.get("person_name") else "") or None,
+                    "payment_method": payment_method_text,
+                    "check_number": (config["check_number"].text().strip() if config.get("check_number") else "") or None,
+                    "due_date": (config["due_date"].text().strip() if config.get("due_date") else "") or None,
+                    "bank_name": (config["bank_name"].text().strip() if config.get("bank_name") else "") or None,
+                    "reference_number": (config["reference_number"].text().strip() if config.get("reference_number") else "") or None,
+                }
             
             d_id = self.lineEdit_38.text().strip()
             g_id = self.lineEdit_39.text().strip()
@@ -6314,9 +6578,10 @@ class MainWindow(QMainWindow, FORM_CLASS):
             # الأرصدة
             self.db_service._create_opening_balances(
                 db=db, orphan_id=orphan.id, 
-                balances={'ILS': ils, 'USD': usd, 'JOD': jod, 'EUR': eur}, 
+                balances=opening_balances,
                 create_transactions=True,
                 note=note,
+                transaction_details=opening_txn_details,
             )
 
             # ربط الوصي
@@ -8070,6 +8335,41 @@ class MainWindow(QMainWindow, FORM_CLASS):
         except Exception as e:
             print(e)
             QMessageBox.critical(self, "خطأ", f"فشل التصدير: {str(e)}")
+
+    def export_t_table_report(self):
+        try:
+            if not self.current_deceased_for_t_table:
+                QMessageBox.warning(self, "تنبيه", "يرجى اختيار متوفى أولاً ثم فتح جدول الحركات.")
+                return
+
+            currency_id = self.c_combo.currentData()
+            if not currency_id:
+                QMessageBox.warning(self, "تنبيه", "يرجى اختيار العملة قبل تصدير التقرير.")
+                return
+
+            dialog = ExportFinancialTableDialog(self)
+            if not dialog.exec():
+                return
+
+            file_format = dialog.selected_format
+            ext = "pdf" if file_format == "pdf" else "xlsx"
+            default_name = f"تقرير_حركات_المتوفى_{self.current_deceased_for_t_table.id}_{date.today().strftime('%Y%m%d')}.{ext}"
+            filter_text = "PDF Files (*.pdf)" if file_format == "pdf" else "Excel Files (*.xlsx)"
+            path, _ = QFileDialog.getSaveFileName(self, "حفظ تقرير جدول الحركات", default_name, filter_text)
+            if not path:
+                return
+
+            generate_financial_table_report(
+                deceased_id=self.current_deceased_for_t_table.id,
+                currency_id=currency_id,
+                output_path=path,
+                db_service=self.db_service,
+                exported_by=self.current_user.name if self.current_user else "---",
+                file_format=file_format,
+            )
+            QMessageBox.information(self, "نجاح", "تم تصدير تقرير جدول الحركات بنجاح.")
+        except Exception as e:
+            QMessageBox.critical(self, "خطأ", f"تعذر تصدير تقرير جدول الحركات: {str(e)}")
     
     def toggle_deceased_ils_inputs(self):
         index = self.comboBox.currentIndex()
@@ -8331,6 +8631,33 @@ class MainWindow(QMainWindow, FORM_CLASS):
         deceased_id = self.d_combo.itemData(index)
         if deceased_id:
             print(f"تم اختيار المتوفى صاحب الرقم التسلسلي: {deceased_id}")
+    
+    def toggle_transactions_inputs(self, comboBox: QComboBox, fields: dict):
+        selected_value = comboBox.currentText()
+        show_general = selected_value != "اختر"
+        show_shik = "شيك" in selected_value and show_general
+        show_transfer = "تحويل بنكي" in selected_value and show_general
+
+        category_visibility = {
+            'general': show_general,
+            'shik': show_shik,
+            'transfer': show_transfer,
+        }
+
+        all_pairs = set()
+        visible_pairs = set()
+        for key, pairs in (fields or {}).items():
+            for pair in pairs:
+                if not pair:
+                    continue
+                all_pairs.add(pair)
+                if category_visibility.get(key, False):
+                    visible_pairs.add(pair)
+
+        for label, field in all_pairs:
+            is_visible = (label, field) in visible_pairs
+            label.setVisible(is_visible)
+            field.setVisible(is_visible)
     
     # ===== Close Event =====
     def closeEvent(self, event):

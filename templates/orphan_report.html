@@ -9,7 +9,7 @@
             margin: 15mm;
         }
         body {
-            font-family: 'Arial', 'Cairo', sans-serif;
+            font-family: 'Cairo', 'Arial', sans-serif;
             line-height: 1.5;
             color: #2c3e50;
             margin: 0;
@@ -19,19 +19,23 @@
         .header-table {
             width: 100%;
             border-bottom: 3px solid #2c3e50;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
+            margin-bottom: 12px;
+			padding-bottom: 4px;
         }
         .logo {
-            width: 85px;
-            height: auto;
-        }
+			width: 120px;
+			height: auto;
+		}
+		.logo2 {
+			width: 85px;
+			height: auto;
+		}
         .header-text {
             text-align: center;
         }
         .header-text h1 {
             margin: 0;
-            font-size: 22px;
+            font-size: 18px;
             color: #2c3e50;
         }
         .header-text p {
@@ -171,7 +175,7 @@
             <td class="header-text">
                 <h1>{{ organization }}</h1>
             </td>
-            <td width="20%" style="text-align: left;"><img src="{{ ps_logo_path }}" class="logo"></td>
+            <td width="20%" style="text-align: left;"><img src="{{ ps_logo_path }}" class="logo2"></td>
         </tr>
     </table>
 

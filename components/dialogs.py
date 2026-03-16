@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QDate, QLocale, QTimer
 from decimal import Decimal
-from database.models import Deceased, Orphan
+from database.models import Deceased, Orphan, DeceasedBalance
 from services.reporting import generate_monthly_report
 
 class GuardianSearchDialog(QDialog):
@@ -53,8 +53,49 @@ class GuardianSearchDialog(QDialog):
             self.selected_person = self.current_results[index]
             self.accept()
 
+# class DeceasedSearchDialog(QDialog):
+#     def __init__(self, db_service, parent=None):
+#         super().__init__(parent)
+#         self.db_service = db_service
+#         self.selected_person = None
+#         self.setWindowTitle("بحث عن متوفى")
+#         self.resize(450, 350)
 
-class DeceasedSearchDialog(QDialog):
+#         layout = QVBoxLayout(self)
+#         self.search_input = QLineEdit()
+#         self.search_input.setPlaceholderText("ادخل الاسم أو رقم الهوية...")
+#         self.search_input.setStyleSheet("padding: 8px; font-size: 14px; border: 1px solid #3498db; border-radius: 4px;")
+#         layout.addWidget(self.search_input)
+
+#         self.results_list = QListWidget()
+#         self.results_list.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+#         self.results_list.setStyleSheet("""
+#             QListWidget::item { padding: 10px; border-bottom: 1px solid #eee; }
+#             QListWidget::item:selected { background-color: #3498db; color: white; }
+#         """)
+#         layout.addWidget(self.results_list)
+
+#         self.search_input.textChanged.connect(self.update_results)
+#         self.results_list.itemDoubleClicked.connect(self.accept_selection)
+#         self.current_results = []
+
+#     def update_results(self, text):
+#         self.results_list.clear()
+#         if len(text) < 2: return
+        
+#         # البحث في قاعدة البيانات
+#         self.current_results = self.db_service.search_deceased(text)
+        
+#         for deceased in self.current_results:
+#             self.results_list.addItem(f"{deceased.name} | رقم الهوية: {deceased.national_id or '---'}")
+
+#     def accept_selection(self):
+#         index = self.results_list.currentRow()
+#         if index >= 0:
+#             self.selected_person = self.current_results[index]
+#             self.accept()
+
+class DeceasedSearchDialogV2(QDialog):
     def __init__(self, db_service, parent=None):
         super().__init__(parent)
         self.db_service = db_service
@@ -284,6 +325,45 @@ class ExportReportDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "خطأ", f"حدث خطأ أثناء التصدير: {str(e)}")
 
+class ExportFinancialTableDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("تصدير تقرير جدول الحركات")
+        self.setFixedSize(340, 180)
+        self.selected_format = "pdf"
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        title = QLabel("اختر نوع التصدير لتقرير جدول الحركات")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        self.radio_pdf = QRadioButton("PDF (رسمي)")
+        self.radio_excel = QRadioButton("Excel (بيانات)")
+        self.radio_pdf.setChecked(True)
+
+        self.group = QButtonGroup(self)
+        self.group.addButton(self.radio_pdf)
+        self.group.addButton(self.radio_excel)
+
+        layout.addWidget(self.radio_pdf)
+        layout.addWidget(self.radio_excel)
+
+        btn_row = QHBoxLayout()
+        btn_export = QPushButton("متابعة")
+        btn_cancel = QPushButton("إلغاء")
+        btn_export.clicked.connect(self._accept_choice)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_export)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+    def _accept_choice(self):
+        self.selected_format = "excel" if self.radio_excel.isChecked() else "pdf"
+        self.accept()
+
 class AddTransactionDialog(QDialog):
     def __init__(self, deceased_id, db_service, parent=None, forced_currency_code=None, hide_currency_field=False, hide_date_field=False):
         super().__init__(parent)
@@ -312,13 +392,13 @@ class AddTransactionDialog(QDialog):
 
         # --- 1. الحقول الأساسية ---
         self.combo_type = QComboBox()
-        self.combo_type.addItems(["إيداع", "سحب"])
+        self.combo_type.addItems(["اختر", "إيداع", "سحب"])
         
         self.combo_currency = QComboBox()
         self.combo_currency.addItems(["ILS", "USD", "JOD", "EUR"])
 
         self.amount_input = QDoubleSpinBox()
-        self.amount_input.setRange(0.01, 9999999.99)
+        self.amount_input.setRange(0.00, 9999999.99)
         self.amount_input.setDecimals(2)
         self.amount_input.setLocale(self.english_locale) # أرقام إنجليزية
 
@@ -372,9 +452,9 @@ class AddTransactionDialog(QDialog):
         self.form_layout.addRow("نوع الحركة:", self.combo_type)
         self.form_layout.addRow("العملة:", self.combo_currency)
         self.form_layout.addRow("المبلغ:", self.amount_input)
+        self.form_layout.addRow("طريقة الإيداع/السحب:", self.payment_method)
         self.form_layout.addRow("رقم سند القبض/الصرف:", self.receipt_number)
         self.form_layout.addRow("المودع/المستفيد:", self.payer_name)
-        self.form_layout.addRow("طريقة الإيداع/السحب:", self.payment_method)
         self.form_layout.addRow(self.bank_group_widget)
         self.form_layout.addRow("تاريخ الحركة:", self.date_input)
 
@@ -407,7 +487,7 @@ class AddTransactionDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         self.main_layout.addWidget(self.buttons)
 
-        self.toggle_bank_fields("نقداً")
+        self.toggle_bank_fields(self.payment_method.currentText())
         
         self.divide_checkbox = QCheckBox("توزيع هذا المبلغ على الأيتام التابعين له")
         self.divide_checkbox.setVisible(True) # يظهر فقط في حالة الإيداع
@@ -431,12 +511,11 @@ class AddTransactionDialog(QDialog):
         
         self.form_layout.addRow("ملاحظة:", self.note)
 
-        
-        # ربط تغيير النوع (إيداع/سحب) بالدالة الجديدة
-        # self.combo_type.currentTextChanged.connect(self.toggle_transaction_type_fields)
-        
-        # # استدعاء الدالة فوراً لضبط الحالة الابتدائية
-        # self.toggle_transaction_type_fields()
+        # ربط تغيير النوع (إيداع/سحب) بإظهار/إخفاء الحقول
+        self.combo_type.currentTextChanged.connect(self._update_fields_visibility)
+
+        # ضبط الحالة الابتدائية — إخفاء كل شيء عدا نوع الحركة
+        self._update_fields_visibility(self.combo_type.currentText())
     
     def toggle_transaction_type_fields(self):
         """التحكم في ظهور الحقول بناءً على نوع الحركة (إيداع/سحب)"""
@@ -471,6 +550,22 @@ class AddTransactionDialog(QDialog):
 
     def toggle_bank_fields(self, method):
         """ التحكم الديناميكي الكامل في حقول البنك وتاريخ الاستحقاق """
+        # إظهار/إخفاء حقول السند والمودع/المستفيد حسب اختيار طريقة الدفع.
+        method_selected = method != "اختر"
+        receipt_label = self.form_layout.labelForField(self.receipt_number)
+        payer_label = self.form_layout.labelForField(self.payer_name)
+
+        if receipt_label:
+            receipt_label.setVisible(method_selected)
+        self.receipt_number.setVisible(method_selected)
+
+        if payer_label:
+            payer_label.setVisible(method_selected)
+        self.payer_name.setVisible(method_selected)
+
+        if not method_selected:
+            self.receipt_number.clear()
+            self.payer_name.clear()
         
         # 1. إظهار الحاوية البنكية فقط إذا لم يكن الدفع نقداً
         is_not_cash = method in ["شيك", "تحويل بنكي"]
@@ -514,8 +609,57 @@ class AddTransactionDialog(QDialog):
             ref_label.setText("رقم الحوالة:")
             self.reference_number.setPlaceholderText("أدخل رقم الحوالة")
 
+    def _update_fields_visibility(self, type_text):
+        """إخفاء/إظهار جميع الحقول بناءً على اختيار نوع الحركة"""
+        is_selected = type_text != "اختر"
+
+        def set_row_visible(field, visible):
+            label = self.form_layout.labelForField(field)
+            if label:
+                label.setVisible(visible)
+            field.setVisible(visible)
+
+        # الحقول الأساسية
+        if not self.hide_currency_field:
+            set_row_visible(self.combo_currency, is_selected)
+        set_row_visible(self.amount_input, is_selected)
+        set_row_visible(self.payment_method, is_selected)
+        if not self.hide_date_field:
+            set_row_visible(self.date_input, is_selected)
+
+        # حقول طريقة الدفع والبنك — تعتمد على payment_method
+        if is_selected:
+            self.toggle_bank_fields(self.payment_method.currentText())
+        else:
+            set_row_visible(self.receipt_number, False)
+            set_row_visible(self.payer_name, False)
+            self.bank_group_widget.setVisible(False)
+
+        # قسم التوزيع
+        self.divide_checkbox.setVisible(is_selected)
+        division_label = self.form_layout.labelForField(self.division_mode_combo)
+        if division_label:
+            division_label.setVisible(is_selected)
+        self.division_mode_combo.setVisible(is_selected)
+        self.include_guardian_checkbox.setVisible(is_selected)
+        set_row_visible(self.note, is_selected)
+
+        # إعادة ضبط عند العودة لـ "اختر"
+        if not is_selected:
+            self.payment_method.setCurrentIndex(0)
+            self.divide_checkbox.setChecked(False)
+
+        # ضبط حجم النافذة تلقائياً (التجاوبية)
+        self.adjustSize()
+
     def validate_and_save(self):
         """ التحقق من صحة البيانات قبل الحفظ """
+        # 0. التحقق من اختيار نوع الحركة
+        if self.combo_type.currentText() == "اختر":
+            QMessageBox.warning(self, "تنبيه", "يرجى اختيار نوع الحركة أولاً")
+            self.combo_type.setFocus()
+            return
+
         # 1. التحقق من صلاحية تاريخ الحركة
         q_date = QDate.fromString(self.date_input.text(), "dd/MM/yyyy")
         if not q_date.isValid():
@@ -525,6 +669,11 @@ class AddTransactionDialog(QDialog):
 
         # 2. التحقق من الرصيد إذا كانت الحركة سحب
         amount = Decimal(str(self.amount_input.value()))
+        if amount <= 0:
+            QMessageBox.warning(self, "خطأ في المبلغ", "يرجى إدخال مبلغ أكبر من صفر")
+            self.amount_input.setFocus()
+            return
+        
         currency = self.combo_currency.currentText()
         if "سحب" in self.combo_type.currentText():
             current_bal = self.db_service.get_deceased_balance(self.deceased_id, currency)
@@ -556,7 +705,357 @@ class AddTransactionDialog(QDialog):
             "bank_name": self.bank_name.text().strip() or None,
             "due_date": QDate.fromString(self.due_date.text(), "dd/MM/yyyy").toPyDate() if self.bank_group_widget.isVisible() else None,
             "reference_number": self.reference_number.text().strip() or None,
-            # "created_at": QDate.fromString(self.date_input.text(), "dd/MM/yyyy").toPyDate()
+            "created_at": QDate.fromString(self.date_input.text(), "dd/MM/yyyy").toPyDate() if self.date_input.isVisible() else None,
+            "currency_code": selected_code,
+            "should_distribute": self.divide_checkbox.isChecked(),
+            "distribution_mode": self.division_mode_combo.currentText(),
+            "include_guardian_share": self.include_guardian_checkbox.isChecked(),
+            "note": self.note.text().strip()
+        }
+
+class AddTransactionDialogV2(QDialog):
+    def __init__(self, deceased_id, db_service, parent=None, forced_currency_code=None, hide_currency_field=False, hide_date_field=False):
+        super().__init__(parent)
+        self.deceased_id = deceased_id
+        self.db_service = db_service
+        self.forced_currency_code = forced_currency_code
+        self.hide_currency_field = hide_currency_field
+        self.hide_date_field = hide_date_field
+        self.setWindowTitle("إضافة حركة مالية جديدة")
+        self.setMinimumWidth(500)
+        
+        # 1. ضبط اتجاه النافذة من اليمين إلى اليسار (العربية)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        self.form_layout = QFormLayout()
+        
+        # ضبط محاذاة العناوين لتناسب الاتجاه الأيمن
+        self.form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        # تعريف Locale إنجليزي لفرض الأرقام والتواريخ بالإنجليزية
+        self.english_locale = QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+
+        # --- 1. الحقول الأساسية ---
+        self.combo_type = QComboBox()
+        self.combo_type.addItems(["اختر", "إيداع", "سحب"])
+        
+        self.combo_currency = QComboBox()
+        self.combo_currency.addItems(["ILS", "USD", "JOD", "EUR"])
+
+        self.amount_input = QDoubleSpinBox()
+        self.amount_input.setRange(0.00, 9999999.99)
+        self.amount_input.setDecimals(2)
+        self.amount_input.setLocale(self.english_locale) # أرقام إنجليزية
+
+        # --- 2. حقل التاريخ المعدل (LineEdit مع Mask) ---
+        self.date_input = QLineEdit()
+        self.date_input.setLocale(self.english_locale)
+        # القناع: 9 تعني رقم إجباري، / ثابتة، _; تعني الفراغ يظهر كـ _
+        self.date_input.setInputMask("99/99/9999;_") 
+        # وضع تاريخ اليوم كقيمة افتراضية
+        self.date_input.setText(QDate.currentDate().toString("dd/MM/yyyy"))
+
+        # --- 3. حقول التوثيق ---
+        self.receipt_number = QLineEdit()
+        self.receipt_number.setLocale(self.english_locale)
+        # self.receipt_number.setPlaceholderText("أرقام فقط")
+
+        self.payer_name = QLineEdit()
+        
+        self.payment_method = QComboBox()
+        self.payment_method.addItems(["اختر", "نقداً", "شيك", "تحويل بنكي"])
+        self.payment_method.currentTextChanged.connect(self.toggle_bank_fields)
+
+        # --- 4. حقول البنك (ديناميكية) ---
+        self.bank_group_widget = QWidget()
+        self.bank_layout = QFormLayout(self.bank_group_widget)
+        self.bank_layout.setContentsMargins(0, 0, 0, 0)
+        self.bank_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+
+        self.check_number = QLineEdit()
+        self.check_number.setLocale(self.english_locale)
+        
+        self.bank_name = QLineEdit()
+        
+        # تاريخ الاستحقاق أيضاً كـ LineEdit بـ Mask
+        self.due_date = QLineEdit()
+        self.due_date.setLocale(self.english_locale)
+        self.due_date.setInputMask("99/99/9999;_")
+        # self.due_date.setText(QDate.currentDate().toString("dd/MM/yyyy"))
+        
+        self.reference_number = QLineEdit()
+        self.reference_number.setLocale(self.english_locale)
+        
+        self.note = QLineEdit()
+        
+        self.bank_layout.addRow("رقم الشيك:", self.check_number)
+        self.bank_layout.addRow("اسم البنك:", self.bank_name)
+        self.bank_layout.addRow("تاريخ الاستحقاق:", self.due_date)
+        self.bank_layout.addRow("رقم الحوالة:", self.reference_number)
+
+        # إضافة كافة الحقول للنموذج
+        self.form_layout.addRow("نوع الحركة:", self.combo_type)
+        self.form_layout.addRow("تاريخ الحركة:", self.date_input)
+        self.form_layout.addRow("العملة:", self.combo_currency)
+        self.form_layout.addRow("المبلغ:", self.amount_input)
+        self.form_layout.addRow("طريقة الإيداع/السحب:", self.payment_method)
+        self.form_layout.addRow("رقم سند القبض/الصرف:", self.receipt_number)
+        self.form_layout.addRow("المودع/المستفيد:", self.payer_name)
+        self.form_layout.addRow(self.bank_group_widget)
+
+        self.main_layout.addLayout(self.form_layout)
+
+        if self.forced_currency_code:
+            idx = self.combo_currency.findText(self.forced_currency_code)
+            if idx >= 0:
+                self.combo_currency.setCurrentIndex(idx)
+
+        if self.hide_currency_field:
+            currency_label = self.form_layout.labelForField(self.combo_currency)
+            if currency_label:
+                currency_label.setVisible(False)
+            self.combo_currency.setVisible(False)
+
+        if self.hide_date_field:
+            date_label = self.form_layout.labelForField(self.date_input)
+            if date_label:
+                date_label.setVisible(False)
+            self.date_input.setVisible(False)
+
+        # --- 5. أزرار التحكم ---
+        self.buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.buttons.accepted.connect(self.validate_and_save)
+        self.buttons.rejected.connect(self.reject)
+        self.main_layout.addWidget(self.buttons)
+
+        self.toggle_bank_fields(self.payment_method.currentText())
+        
+        self.divide_checkbox = QCheckBox("توزيع هذا المبلغ على الأيتام التابعين له")
+        self.divide_checkbox.setVisible(True) # يظهر فقط في حالة الإيداع
+        # self.combo_type.currentTextChanged.connect(self.toggle_divide_option)
+        
+        self.division_mode_combo = QComboBox()
+        self.division_mode_combo.addItems(["يدوي", "بالتساوي", "للذكر مثل حظ الأنثيين"])
+        self.division_mode_combo.setEnabled(False)
+        self.divide_checkbox.toggled.connect(self.division_mode_combo.setEnabled)
+
+        self.include_guardian_checkbox = QCheckBox("توزيع المبلغ على الوصي أيضاً")
+        self.include_guardian_checkbox.setEnabled(False)
+        self.divide_checkbox.toggled.connect(self.include_guardian_checkbox.setEnabled)
+        self.divide_checkbox.toggled.connect(
+            lambda checked: self.include_guardian_checkbox.setChecked(False) if not checked else None
+        )
+
+        self.form_layout.addRow(self.divide_checkbox)
+        self.form_layout.addRow("طريقة التقسيم:", self.division_mode_combo)
+        self.form_layout.addRow(self.include_guardian_checkbox)
+        
+        self.form_layout.addRow("ملاحظة:", self.note)
+
+        # ربط تغيير النوع (إيداع/سحب) بإظهار/إخفاء الحقول
+        self.combo_type.currentTextChanged.connect(self._update_fields_visibility)
+
+        # ضبط الحالة الابتدائية — إخفاء كل شيء عدا نوع الحركة
+        self._update_fields_visibility(self.combo_type.currentText())
+    
+    def toggle_transaction_type_fields(self):
+        """التحكم في ظهور الحقول بناءً على نوع الحركة (إيداع/سحب)"""
+        transaction_type = self.combo_type.currentText()
+        is_deposit = "إيداع" in transaction_type
+        
+        # 1. إظهار/إخفاء حقول المودع وطريقة الدفع
+        # (ستظهر فقط في حالة الإيداع وتختفي في السحب)
+        self.payer_name.setVisible(is_deposit)
+        self.form_layout.labelForField(self.payer_name).setVisible(is_deposit)
+        
+        self.payment_method.setVisible(is_deposit)
+        self.form_layout.labelForField(self.payment_method).setVisible(is_deposit)
+
+        # 2. التحكم في حقول البنك (إذا كانت مخفية لأن الحركة سحب)
+        if not is_deposit:
+            self.bank_group_widget.setVisible(False)
+        else:
+            # إذا عاد للإيداع، نتحقق من طريقة الدفع المختارة حالياً
+            self.toggle_bank_fields(self.payment_method.currentText())
+
+        # 3. إظهار خيار التقسيم (بناءً على طلبك ليكون متاحاً في السحب أيضاً)
+        # إذا كنت تريده متاحاً دائماً، نجعله True
+        self.divide_checkbox.setVisible(True)
+    
+    def toggle_divide_option(self, transaction_type):
+        """إظهار خيار التقسيم فقط عند الإيداع"""
+        is_deposit = "إيداع" in transaction_type
+        self.divide_checkbox.setVisible(is_deposit)
+        if not is_deposit:
+            self.divide_checkbox.setChecked(False)
+
+    def toggle_bank_fields(self, method):
+        """ التحكم الديناميكي الكامل في حقول البنك وتاريخ الاستحقاق """
+        # إظهار/إخفاء حقول السند والمودع/المستفيد حسب اختيار طريقة الدفع.
+        method_selected = method != "اختر"
+        receipt_label = self.form_layout.labelForField(self.receipt_number)
+        payer_label = self.form_layout.labelForField(self.payer_name)
+
+        if receipt_label:
+            receipt_label.setVisible(method_selected)
+        self.receipt_number.setVisible(method_selected)
+
+        if payer_label:
+            payer_label.setVisible(method_selected)
+        self.payer_name.setVisible(method_selected)
+
+        if not method_selected:
+            self.receipt_number.clear()
+            self.payer_name.clear()
+        
+        # 1. إظهار الحاوية البنكية فقط إذا لم يكن الدفع نقداً
+        is_not_cash = method in ["شيك", "تحويل بنكي"]
+        self.bank_group_widget.setVisible(is_not_cash)
+        
+        if not is_not_cash:
+            return
+
+        # 2. جلب العناوين المرتبطة بالحقول للتحكم في ظهورها
+        check_label = self.bank_layout.labelForField(self.check_number)
+        due_date_label = self.bank_layout.labelForField(self.due_date)
+        ref_label = self.bank_layout.labelForField(self.reference_number)
+
+        if method == "شيك":
+            # إظهار كل شيء متعلق بالشيك
+            check_label.setVisible(True)
+            self.check_number.setVisible(True)
+            due_date_label.setVisible(True)
+            self.due_date.setVisible(True)
+            self.reference_number.setVisible(False)
+            ref_label.setVisible(False)
+            self.reference_number.clear()
+            
+            # ضبط مسميات الشيك
+            due_date_label.setText("تاريخ الاستحقاق:")
+            # ref_label.setText("ملاحظات:")
+            # self.reference_number.setPlaceholderText("مثلاً: اسم المستفيد")
+
+        elif method == "تحويل بنكي":
+            # إخفاء حقل رقم الشيك وتاريخ الاستحقاق تماماً
+            check_label.setVisible(False)
+            self.check_number.setVisible(False)
+            self.check_number.clear()
+            self.reference_number.setVisible(True)
+            ref_label.setVisible(True)
+            
+            due_date_label.setVisible(False)
+            self.due_date.setVisible(False)
+            
+            # ضبط مسميات التحويل
+            ref_label.setText("رقم الحوالة:")
+            self.reference_number.setPlaceholderText("أدخل رقم الحوالة")
+
+    def _update_fields_visibility(self, type_text):
+        """إخفاء/إظهار جميع الحقول بناءً على اختيار نوع الحركة"""
+        is_selected = type_text != "اختر"
+
+        def set_row_visible(field, visible):
+            label = self.form_layout.labelForField(field)
+            if label:
+                label.setVisible(visible)
+            field.setVisible(visible)
+
+        # الحقول الأساسية
+        if not self.hide_currency_field:
+            set_row_visible(self.combo_currency, is_selected)
+        set_row_visible(self.amount_input, is_selected)
+        set_row_visible(self.payment_method, is_selected)
+        if not self.hide_date_field:
+            set_row_visible(self.date_input, is_selected)
+
+        # حقول طريقة الدفع والبنك — تعتمد على payment_method
+        if is_selected:
+            self.toggle_bank_fields(self.payment_method.currentText())
+        else:
+            set_row_visible(self.receipt_number, False)
+            set_row_visible(self.payer_name, False)
+            self.bank_group_widget.setVisible(False)
+
+        # قسم التوزيع
+        self.divide_checkbox.setVisible(is_selected)
+        division_label = self.form_layout.labelForField(self.division_mode_combo)
+        if division_label:
+            division_label.setVisible(is_selected)
+        self.division_mode_combo.setVisible(is_selected)
+        self.include_guardian_checkbox.setVisible(is_selected)
+        set_row_visible(self.note, is_selected)
+
+        # إعادة ضبط عند العودة لـ "اختر"
+        if not is_selected:
+            self.payment_method.setCurrentIndex(0)
+            self.divide_checkbox.setChecked(False)
+
+        # ضبط حجم النافذة تلقائياً (التجاوبية)
+        self.adjustSize()
+
+    def validate_and_save(self):
+        """ التحقق من صحة البيانات قبل الحفظ """
+        # 0. التحقق من اختيار نوع الحركة
+        if self.combo_type.currentText() == "اختر":
+            QMessageBox.warning(self, "تنبيه", "يرجى اختيار نوع الحركة أولاً")
+            self.combo_type.setFocus()
+            return
+
+        # 1. التحقق من صلاحية تاريخ الحركة
+        q_date = QDate.fromString(self.date_input.text(), "dd/MM/yyyy")
+        if not q_date.isValid():
+            QMessageBox.warning(self, "خطأ في التاريخ", "يرجى إدخال تاريخ صالح (يوم/شهر/سنة)")
+            self.date_input.setFocus()
+            return
+
+        # 2. التحقق من الرصيد إذا كانت الحركة سحب
+        amount = Decimal(str(self.amount_input.value()))
+        if amount <= 0:
+            QMessageBox.warning(self, "خطأ في المبلغ", "يرجى إدخال مبلغ أكبر من صفر")
+            self.amount_input.setFocus()
+            return
+        
+        currency = self.combo_currency.currentText()
+        if "سحب" in self.combo_type.currentText():
+            current_bal = self.db_service.get_deceased_balance(self.deceased_id, currency)
+            if amount > current_bal:
+                QMessageBox.warning(self, "رصيد غير كافٍ", f"الرصيد المتوفر {current_bal} {currency} فقط")
+                return
+
+        self.accept()
+
+    def get_transaction_data(self):
+        """ استخراج البيانات النهائية لتخزينها في قاعدة البيانات """
+        currencies = self.db_service.get_currencies()
+        currency_id = None
+        selected_code = self.forced_currency_code or self.combo_currency.currentText()
+        for c in currencies:
+            if c.code == selected_code:
+                currency_id = c.id
+                break
+        
+        return {
+            "deceased_id": self.deceased_id,
+            "currency_id": currency_id,
+            "amount": Decimal(str(self.amount_input.value())),
+            "type": "deposit" if "إيداع" in self.combo_type.currentText() else "withdraw",
+            "receipt_number": self.receipt_number.text().strip(),
+            "payer_name": self.payer_name.text().strip(),
+            "payment_method": self.payment_method.currentText() if self.payment_method.currentText() != "اختر" else None,
+            "check_number": self.check_number.text().strip() if self.check_number.isEnabled() else None,
+            "bank_name": self.bank_name.text().strip() or None,
+            "due_date": QDate.fromString(self.due_date.text(), "dd/MM/yyyy").toPyDate() if self.bank_group_widget.isVisible() else None,
+            "reference_number": self.reference_number.text().strip() or None,
+            "created_at": QDate.fromString(self.date_input.text(), "dd/MM/yyyy").toPyDate() if self.date_input.isVisible() else None,
+            "currency_code": selected_code,
             "should_distribute": self.divide_checkbox.isChecked(),
             "distribution_mode": self.division_mode_combo.currentText(),
             "include_guardian_share": self.include_guardian_checkbox.isChecked(),
@@ -1623,3 +2122,380 @@ class AddTTableRowDialog(QDialog):
             "orphans_transactions": orphan_transactions,
             "guardian_transactions": guardian_transactions,
         }
+
+class AddDeceasedTransactionDialog(AddTTableRowDialog):
+    def __init__(self, parent=None, deceased=None, db_service=None):
+        self.dialog_deceased = deceased
+        self.dialog_db_service = db_service
+        super().__init__(parent)
+        self.setWindowTitle("حركة مالية جديدة (مع العملة)")
+
+    def init_ui(self):
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(12, 12, 12, 12)
+        outer_layout.setSpacing(8)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        self.scroll_content = QWidget()
+        self.main_layout = QVBoxLayout(self.scroll_content)
+        self.main_layout.setContentsMargins(12, 12, 12, 12)
+        self.main_layout.setSpacing(8)
+
+        self.scroll_area.setWidget(self.scroll_content)
+        outer_layout.addWidget(self.scroll_area)
+
+        self.top_grid = QGridLayout()
+        self.top_grid.setHorizontalSpacing(12)
+        self.top_grid.setVerticalSpacing(8)
+        self.main_layout.addLayout(self.top_grid)
+
+        self.transaction_date = QLineEdit()
+        self.transaction_date.setPlaceholderText("تاريخ المعاملة")
+        self.transaction_date.setInputMask("99/99/9999;_")
+        self.transaction_date.setText(QDate.currentDate().toString("dd/MM/yyyy"))
+
+        self.transaction_type = QComboBox()
+        self.transaction_type.addItems(["اختر", "إيداع", "سحب"])
+
+        self.amount_input = QDoubleSpinBox()
+        self.amount_input.setRange(0.00, 9999999.99)
+        self.amount_input.setDecimals(2)
+        self.amount_input.setLocale(self.english_locale)
+        self.amount_input.setSingleStep(10.00)
+
+        self.currency_input = QComboBox()
+        self.currency_input.addItem("اختر")
+        parent = self.parent()
+        parent_currency_combo = getattr(parent, "c_combo", None) if parent else None
+        if isinstance(parent_currency_combo, QComboBox):
+            for i in range(parent_currency_combo.count()):
+                text = parent_currency_combo.itemText(i)
+                if text and self.currency_input.findText(text) == -1:
+                    self.currency_input.addItem(text)
+
+        self.deceased_balance_label = QLabel("رصيد المتوفي المتاح: 0.00")
+        self.deceased_balance_label.setStyleSheet("color: #1f2937; font-weight: bold;")
+
+        self.receipt_number_input = QLineEdit()
+        self.receipt_number_input.setPlaceholderText("رقم سند القبض/الصرف")
+
+        self.depositor_input = QLineEdit()
+        self.depositor_input.setPlaceholderText("المودع / المستفيد")
+
+        self.payment_method_input = QComboBox()
+        self.payment_method_input.addItems(["اختر", "نقداً", "شيك", "تحويل بنكي"])
+
+        self.payment_method_input.currentTextChanged.connect(self.toggle_payment_fields)
+        self.transaction_type.currentTextChanged.connect(self.on_transaction_type_changed)
+        self.currency_input.currentTextChanged.connect(lambda _: self.build_dynamic_entity_fields())
+
+        self.check_number_input = QLineEdit()
+        self.check_number_input.setPlaceholderText("رقم الشيك")
+
+        self.bank_name_input = QLineEdit()
+        self.bank_name_input.setPlaceholderText("اسم البنك")
+
+        self.due_date_input = QLineEdit()
+        self.due_date_input.setPlaceholderText("تاريخ الاستحقاق")
+        self.due_date_input.setInputMask("99/99/9999;_")
+
+        self.reference_number_input = QLineEdit()
+        self.reference_number_input.setPlaceholderText("رقم الحوالة")
+
+        self.note_input = QLineEdit()
+        self.note_input.setPlaceholderText("ملاحظة")
+
+        self._add_pair_row(0, ("تاريخ الحركة", self.transaction_date), ("نوع الحركة", self.transaction_type))
+        self._add_pair_row(1, ("المبلغ", self.amount_input), ("العملة", self.currency_input))
+        self._add_pair_row(2, ("طريقة الإيداع/السحب", self.payment_method_input), ("رقم سند القبض/الصرف", self.receipt_number_input))
+        self._add_pair_row(3, ("المودع/المستفيد", self.depositor_input), None)
+
+        self.check_due_row = self._add_pair_row(4, ("رقم الشيك", self.check_number_input), ("تاريخ الاستحقاق", self.due_date_input))
+        self.bank_ref_row = self._add_pair_row(5, ("اسم البنك", self.bank_name_input), ("رقم الحوالة", self.reference_number_input))
+        self.note_row = self._create_labeled_field("ملاحظة", self.note_input)
+
+        self.main_layout.addWidget(self.deceased_balance_label)
+
+        current_deceased = self._resolve_current_deceased()
+        self.deceased_name_label = QLabel(f"المتوفى: {current_deceased.name}" if current_deceased else "المتوفى: ---")
+        self.deceased_name_label.setStyleSheet("color: #374151; font-weight: 600;")
+        self.main_layout.addWidget(self.deceased_name_label)
+
+        self.divide_checkbox = QCheckBox("تفعيل التوزيع من مبلغ المتوفي")
+        self.main_layout.addWidget(self.divide_checkbox)
+
+        self.distribution_targets_row = QWidget()
+        targets_layout = QHBoxLayout(self.distribution_targets_row)
+        targets_layout.setContentsMargins(0, 0, 0, 0)
+        targets_layout.setSpacing(12)
+        self.distribute_to_guardian_checkbox = QCheckBox("توزيع على الوصي")
+        self.distribute_to_guardian_checkbox.setChecked(False)
+        targets_layout.addWidget(self.distribute_to_guardian_checkbox)
+        targets_layout.addStretch()
+
+        self.division_mode_row = QWidget()
+        dist_layout = QHBoxLayout(self.division_mode_row)
+        dist_layout.setContentsMargins(0, 0, 0, 0)
+        dist_layout.setSpacing(8)
+        dist_layout.addWidget(QLabel("نوع التقسيم:"))
+        self.division_mode_combo = QComboBox()
+        self.division_mode_combo.addItems(["يدوي", "بالتساوي", "للذكر مثل حظ الأنثيين"])
+        self.division_mode_combo.setEnabled(False)
+        dist_layout.addWidget(self.division_mode_combo)
+        dist_layout.addStretch()
+        self.main_layout.addWidget(self.division_mode_row)
+        self.main_layout.addWidget(self.distribution_targets_row)
+
+        self.distribution_hint = QLabel("")
+        self.distribution_hint.setStyleSheet("color: #6b7280;")
+        self.main_layout.addWidget(self.distribution_hint)
+
+        self.toggle_entities_table_checkbox = QCheckBox("إظهار جدول الأيتام والوصي")
+        self.toggle_entities_table_checkbox.setChecked(True)
+        self.main_layout.addWidget(self.toggle_entities_table_checkbox)
+
+        self.dynamic_section_title = QLabel("جدول الأيتام/الوصي")
+        self.dynamic_section_title.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        self.main_layout.addWidget(self.dynamic_section_title)
+
+        self.entities_table = QTableWidget()
+        self.entities_table.setColumnCount(5)
+        self.entities_table.setHorizontalHeaderLabels(["الاسم", "الصفة", "الرصيد الحالي", "نوع الحركة", "مبلغ العملية"])
+        self.entities_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.entities_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.entities_table.verticalHeader().setVisible(False)
+        self.entities_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.entities_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.entities_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.entities_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.entities_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.entities_table.setMinimumHeight(250)
+        self.entities_table.setMaximumHeight(340)
+        self.main_layout.addWidget(self.entities_table)
+        self.main_layout.addWidget(self.note_row)
+
+        self.build_dynamic_entity_fields()
+
+        self.divide_checkbox.toggled.connect(self.on_distribution_settings_changed)
+        self.distribute_to_guardian_checkbox.toggled.connect(self.on_distribution_settings_changed)
+        self.division_mode_combo.currentTextChanged.connect(self.on_distribution_settings_changed)
+        self.amount_input.valueChanged.connect(self.on_distribution_settings_changed)
+        self.toggle_entities_table_checkbox.toggled.connect(self._toggle_entities_table_visibility)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        outer_layout.addWidget(buttons)
+
+        self.toggle_payment_fields(self.payment_method_input.currentText())
+        self.on_transaction_type_changed(self.transaction_type.currentText())
+        self.on_distribution_settings_changed()
+        self._sync_entities_section_visibility()
+
+    def _toggle_entities_table_visibility(self, visible):
+        self.dynamic_section_title.setVisible(visible)
+        self.entities_table.setVisible(visible)
+
+    def _sync_entities_section_visibility(self):
+        is_distributing = self.divide_checkbox.isChecked()
+        wants_table_visible = self.toggle_entities_table_checkbox.isChecked()
+
+        self.toggle_entities_table_checkbox.setVisible(is_distributing)
+        self._toggle_entities_table_visibility(is_distributing and wants_table_visible)
+
+    def _resolve_current_deceased(self):
+        if self.dialog_deceased is not None:
+            return self.dialog_deceased
+        parent = self.parent()
+        return getattr(parent, "current_deceased_for_t_table", None) if parent else None
+
+    def _resolve_db_service(self):
+        if self.dialog_db_service is not None:
+            return self.dialog_db_service
+        parent = self.parent()
+        return getattr(parent, "db_service", None) if parent else None
+
+    def _resolve_selected_currency_id(self):
+        selected_name = (self.currency_input.currentText() or "").strip()
+        parent = self.parent()
+        parent_combo = getattr(parent, "c_combo", None) if parent else None
+
+        if isinstance(parent_combo, QComboBox) and selected_name and selected_name != "اختر":
+            for i in range(parent_combo.count()):
+                if (parent_combo.itemText(i) or "").strip() == selected_name:
+                    return parent_combo.itemData(i)
+
+        if isinstance(parent_combo, QComboBox):
+            return parent_combo.currentData()
+        return None
+
+    def on_transaction_type_changed(self, text):
+        super().on_transaction_type_changed(text)
+
+        is_type_selected = text in ["إيداع", "سحب"]
+        currency_wrapper = getattr(self.currency_input, "_pair_wrapper", self.currency_input)
+        currency_wrapper.setVisible(is_type_selected)
+
+        if not is_type_selected:
+            self.currency_input.setCurrentIndex(0)
+
+        self._sync_entities_section_visibility()
+
+    def on_distribution_settings_changed(self):
+        super().on_distribution_settings_changed()
+        self._sync_entities_section_visibility()
+
+    def _calculate_deceased_available_balance_from_parent(self):
+        deceased = self._resolve_current_deceased()
+        db_service = self._resolve_db_service()
+        currency_id = self._resolve_selected_currency_id()
+
+        if not deceased or not db_service or not currency_id:
+            return Decimal("0")
+
+        session = getattr(db_service, "session", None)
+        if session is None:
+            return Decimal("0")
+
+        try:
+            rec = session.query(DeceasedBalance).filter_by(
+                deceased_id=deceased.id,
+                currency_id=currency_id,
+            ).first()
+            return Decimal(str(rec.balance or 0)) if rec else Decimal("0")
+        except Exception:
+            return Decimal("0")
+
+    def _collect_entities_from_parent(self):
+        entities = super()._collect_entities_from_parent()
+        if entities:
+            return entities
+
+        deceased = self._resolve_current_deceased()
+        if not deceased:
+            return []
+
+        currency_id = self._resolve_selected_currency_id()
+        resolved_entities = []
+
+        for orphan in getattr(deceased, "orphans", []) or []:
+            orphan_balance = 0.0
+            for bal in getattr(orphan, "balances", []) or []:
+                if currency_id and getattr(bal, "currency_id", None) == currency_id:
+                    orphan_balance = float(bal.balance or 0)
+                    break
+
+            resolved_entities.append({
+                "kind": "orphan",
+                "id": orphan.id,
+                "name": orphan.name,
+                "balance": orphan_balance,
+                "gender": getattr(orphan, "gender", None),
+            })
+
+        guardian = None
+        for orphan in getattr(deceased, "orphans", []) or []:
+            links = getattr(orphan, "guardian_links", []) or []
+            primary_link = next((l for l in links if getattr(l, "is_primary", False)), None)
+            link = primary_link or (links[0] if links else None)
+            if link and getattr(link, "guardian", None):
+                guardian = link.guardian
+                break
+
+        if guardian is not None:
+            guardian_balance = 0.0
+            for bal in getattr(guardian, "balances", []) or []:
+                if currency_id and getattr(bal, "currency_id", None) == currency_id:
+                    guardian_balance = float(bal.balance or 0)
+                    break
+
+            resolved_entities.append({
+                "kind": "guardian",
+                "id": guardian.id,
+                "name": guardian.name,
+                "balance": guardian_balance,
+                "gender": None,
+            })
+
+        return resolved_entities
+
+    def build_dynamic_entity_fields(self):
+        self.entities_table.setRowCount(0)
+        self.entity_amount_inputs.clear()
+        self.entity_type_inputs.clear()
+        self.entity_balances.clear()
+        self.entity_meta.clear()
+        self.entity_extra_details.clear()
+        self.entity_details_buttons.clear()
+
+        self.deceased_available_balance = self._calculate_deceased_available_balance_from_parent()
+        self.deceased_balance_label.setText(f"رصيد المتوفي المتاح: {self.deceased_available_balance:,.2f}")
+
+        entities = self._collect_entities_from_parent()
+        if not entities:
+            self.entities_table.setRowCount(1)
+            self.entities_table.setSpan(0, 0, 1, 5)
+            hint_item = QTableWidgetItem("لا توجد بيانات أيتام/وصي حالياً. اختر متوفى أولاً ثم أعد فتح النافذة.")
+            hint_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.entities_table.setItem(0, 0, hint_item)
+            return
+
+        self.entities_table.setRowCount(len(entities))
+        for row, entity in enumerate(entities):
+            role_text = "يتيم" if entity["kind"] == "orphan" else "وصي"
+
+            name_item = QTableWidgetItem(entity["name"])
+            role_item = QTableWidgetItem(role_text)
+            balance_item = QTableWidgetItem(f"{entity['balance']:,.2f}")
+
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            role_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            balance_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            self.entities_table.setItem(row, 0, name_item)
+            self.entities_table.setItem(row, 1, role_item)
+            self.entities_table.setItem(row, 2, balance_item)
+
+            type_combo = QComboBox()
+            type_combo.addItems(["إيداع", "سحب"])
+            type_combo.setCurrentText(self.transaction_type.currentText())
+            type_combo.currentTextChanged.connect(self._refresh_distribution_hint_text)
+            self.entities_table.setCellWidget(row, 3, type_combo)
+
+            amount_input = QDoubleSpinBox()
+            amount_input.setRange(0.00, 9999999.99)
+            amount_input.setDecimals(2)
+            amount_input.setSingleStep(10.00)
+            amount_input.setLocale(self.english_locale)
+            amount_input.setMinimumWidth(150)
+            amount_input.valueChanged.connect(self._refresh_distribution_hint_text)
+            self.entities_table.setCellWidget(row, 4, amount_input)
+
+            key = (entity["kind"], entity["id"])
+            self.entity_type_inputs[key] = type_combo
+            self.entity_amount_inputs[key] = amount_input
+            self.entity_balances[key] = float(entity["balance"])
+            self.entity_meta[key] = entity
+
+        self.entities_table.resizeRowsToContents()
+
+    def get_data(self):
+        data = super().get_data()
+        selected_currency = self.currency_input.currentText().strip()
+        data["currency"] = selected_currency if selected_currency and selected_currency != "اختر" else None
+        return data
+
+    def validate_and_accept(self):
+        tx_type = self.transaction_type.currentText()
+        if tx_type in ["إيداع", "سحب"]:
+            selected_currency = (self.currency_input.currentText() or "").strip()
+            if not selected_currency or selected_currency == "اختر":
+                QMessageBox.warning(self, "تنبيه", "يرجى اختيار العملة بعد تحديد نوع الحركة.")
+                self.currency_input.setFocus()
+                return
+
+        super().validate_and_accept()
